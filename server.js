@@ -1,21 +1,17 @@
 const express = require('express');
 const app = express();
-const http = require('http').createServer(app);
-// ИСПРАВЛЕНИЕ: Разрешаем только протокол polling, который LocalTunnel не может заблокировать
-const io = require('socket.io')(http, {
-    transports: ['polling'],
-    cors: { origin: "*" }
-});
+const server = require('http').createServer(app);
+const io = require('socket.io')(server);
 
 app.use(express.static(__dirname));
 
-let players = {}; // Объект для хранения игроков: { socketId: 'X' или 'O' }
-let restartRequests = []; // Сюда будем сохранять ID игроков, нажавших "Реванш"
+let players = {};
+let restartRequests = []; // Массив для сбора голосов за реванш
 
 io.on('connection', (socket) => {
     console.log('Пользователь подключился: ' + socket.id);
 
-    // Логика распределения по ролям
+    // Распределение ролей
     let hasX = Object.values(players).includes('X');
     let hasO = Object.values(players).includes('O');
 
@@ -29,7 +25,6 @@ io.on('connection', (socket) => {
         socket.emit('player-role', 'viewer');
     }
 
-    // Если теперь на сервере есть и X, и O — запускаем игру
     hasX = Object.values(players).includes('X');
     hasO = Object.values(players).includes('O');
     if (hasX && hasO) {
@@ -41,44 +36,41 @@ io.on('connection', (socket) => {
         socket.broadcast.emit('server-move', cellIndex);
     });
 
-    // Пересылка победы для синхронизации салюта
+    // Синхронизация победы
     socket.on('player-won', (conditionIndex) => {
         socket.broadcast.emit('server-win', conditionIndex);
     });
 
-// Обработка запроса на реванш
-socket.on('request-restart', () => {
-    if (!players[socket.id]) return; // Зрители не голосуют
+    // ЛОГИКА РЕВАНША
+    socket.on('request-restart', () => {
+        if (!players[socket.id]) return; // Зрители не голосуют
 
-    if (!restartRequests.includes(socket.id)) {
-        restartRequests.push(socket.id);
-    }
+        if (!restartRequests.includes(socket.id)) {
+            restartRequests.push(socket.id);
+        }
 
-    if (restartRequests.length === 1) {
-        // Говорим второму игроку, что оппонент готов к реваншу
-        socket.broadcast.emit('opponent-wants-restart', 'Соперник хочет начать заново!');
-    } else if (restartRequests.length === 2) {
-        restartRequests = []; // Сбрасываем счетчик
-        io.emit('server-restart'); // Команда обоим клиентам очистить поле
-    }
-});
+        if (restartRequests.length === 1) {
+            // Говорим оппоненту, что первый игрок нажал "Начать заново"
+            socket.broadcast.emit('opponent-wants-restart', 'Соперник хочет начать заново!');
+        } else if (restartRequests.length === 2) {
+            restartRequests = []; // Обнуляем голоса
+            io.emit('server-restart'); // Команда обоим клиентам на полный сброс
+        }
+    });
 
-
-    // Очистка при обновлении страницы или дисконнекте
+    // Отключение
     socket.on('disconnect', () => {
         console.log('Пользователь отключился: ' + socket.id);
-        
         if (players[socket.id]) {
             delete players[socket.id];
             io.emit('player-disconnected', 'Ваш соперник ушел. Игра окончена.');
-            players = {}; // Обнуляем комнату для корректного перезапуска при F5
-            restartRequests = [];
+            players = {};
+            restartRequests = []; // Сброс при выходе игрока
         }
     });
 });
 
-// Запуск сервера на порту 3000
 const PORT = process.env.PORT || 3000;
-http.listen(PORT, () => {
+server.listen(PORT, () => {
     console.log(`Сервер запущен на порту ${PORT}`);
 });
