@@ -9,7 +9,7 @@ let gameState = ["", "", "", "", "", "", "", "", ""];
 let gameActive = true;
 let myRole = ""; // 'X', 'O' или 'viewer'
 
-// ПОЛНЫЙ МАССИВ КОМБИНАЦИЙ (ТЕПЕРЬ ВСЁ НА МЕСТЕ)
+// Полный и точный массив комбинаций для line.js
 const winningConditions = [
     [0, 1, 2], // Горизонтали
     [3, 4, 5],
@@ -31,16 +31,16 @@ cells.forEach(cell => {
             return;
         }
 
-        // Делаем ход локально
+        // Фиксируем ход локально
         makeMove(cell, cellIndex);
 
         // Отправляем ход сопернику через сервер
         socket.emit('player-move', cellIndex);
 
-        // Проверяем, не выиграли ли мы от этого хода
+        // Проверяем победу после своего хода
         const isWin = checkWin();
         
-        // Если выиграли, отправляем серверу индекс победной линии для синхронизации анимации
+        // Если выиграли — отправляем серверу индекс комбинации для линии
         if (isWin) {
             const conditionIndex = getWinningConditionIndex();
             if (conditionIndex !== -1) {
@@ -50,14 +50,18 @@ cells.forEach(cell => {
     });
 });
 
-// Функция фиксации хода на экране и в памяти (ВОЗВРАЩЕНЫ ЦВЕТА И КЛАССЫ)
+// Функция фиксации хода на экране и в памяти (ИСПРАВЛЕНО: ТОЧНЫЕ КЛАССЫ ИЗ ВЕТКИ MAIN)
 function makeMove(cell, cellIndex) {
     gameState[cellIndex] = currentPlayer;
     cell.innerText = currentPlayer;
     cell.classList.add('taken');
     
-    // Добавляем класс стиля в нижнем регистре ('x' или 'o') для правильного цвета
-    cell.classList.add(currentPlayer.toLowerCase());
+    // Добавляем оригинальные классы из вашей рабочей ветки main
+    if (currentPlayer === "X") {
+        cell.classList.add('cross');   // Дает синий цвет
+    } else {
+        cell.classList.add('circle');  // Дает красный цвет
+    }
     
     // Смена текущего игрока
     currentPlayer = currentPlayer === "X" ? "O" : "X";
@@ -84,7 +88,7 @@ function getWinningConditionIndex() {
     return -1;
 }
 
-// Проверка условий окончания игры (ИСПРАВЛЕНО)
+// Проверка условий окончания игры (ИСПРАВЛЕНО: ИНТЕГРАЦИЯ С LINE.JS)
 function checkWin() {
     let roundWon = false;
     let winConditionIndex = -1;
@@ -110,7 +114,7 @@ function checkWin() {
         statusText.innerText = winner === myRole ? 'Вы победили!' : `Победил ${winner}!`;
         gameActive = false;
         
-        // Отрисовка линии локально
+        // Отрисовка линии из вашего файла line.js локально
         if (typeof drawWinningLine === 'function' && winConditionIndex !== -1) {
             drawWinningLine(winConditionIndex);
         }
@@ -124,8 +128,6 @@ function checkWin() {
     if (!gameState.includes("")) {
         statusText.innerText = "Ничья!";
         gameActive = false;
-        
-        // Показываем кнопку реванша
         resetBtn.style.display = 'block';
         return true;
     }
@@ -133,23 +135,21 @@ function checkWin() {
     return false;
 }
 
-// Ловим анимацию победной линии от соперника, если выиграл он
+// Ловим анимацию победной линии от соперника (ИСПРАВЛЕНО)
 socket.on('server-win', (conditionIndex) => {
     gameActive = false;
     const winner = currentPlayer === "X" ? "O" : "X";
     statusText.innerText = winner === myRole ? 'Вы победили!' : `Победил ${winner}!`;
     
-    // Функция отрисовки линии из файла line.js
+    // Отрисовка линии у того, кто проиграл матч
     if (typeof drawWinningLine === 'function') {
         drawWinningLine(conditionIndex);
     }
     
-    // Показываем кнопку реванша
     resetBtn.style.display = 'block';
 });
 
 // === СЕТЕВАЯ ЛОГИКА РОЛЕЙ ===
-
 socket.on('player-role', (role) => {
     myRole = role;
     if (role === 'viewer') {
@@ -172,8 +172,7 @@ socket.on('player-disconnected', (msg) => {
     resetBtn.style.display = 'none';
 });
 
-// === СЕТЕВАЯ ЛОГИКА КНОПКИ РЕВАНША ===
-
+// === СЕТЕВАЯ ЛОГИКА КНОПКИ НАЧАТЬ ЗАНОВО ===
 resetBtn.addEventListener('click', () => {
     socket.emit('request-restart');
     resetBtn.innerText = 'Ожидание соперника...';
@@ -195,13 +194,13 @@ socket.on('server-restart', () => {
 
     statusText.innerText = currentPlayer === myRole ? 'Ваш ход!' : 'Ход соперника...';
 
-    // Очищаем ячейки на экране (ИСПРАВЛЕНО: Стираем классы цвета 'x' и 'o')
+    // Очищаем ячейки (удаляем точные классы cross и circle)
     cells.forEach(cell => {
         cell.innerText = "";
-        cell.classList.remove('taken', 'x', 'o');
+        cell.classList.remove('taken', 'cross', 'circle');
     });
 
-    // Очищаем canvas с победной линией
+    // Очищаем canvas с линией победы из line.js
     const canvas = document.getElementById('line-canvas');
     if (canvas) {
         const ctx = canvas.getContext('2d');
