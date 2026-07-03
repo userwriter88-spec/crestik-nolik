@@ -9,13 +9,15 @@ let gameState = ["", "", "", "", "", "", "", "", ""];
 let gameActive = true;
 let myRole = ""; // 'X', 'O' или 'viewer'
 
-const winningConditions = [,
- ,
- ,
- ,
- ,
- ,
- ,
+// ПОЛНЫЙ МАССИВ КОМБИНАЦИЙ (ТЕПЕРЬ ВСЁ НА МЕСТЕ)
+const winningConditions = [
+    [0, 1, 2], // Горизонтали
+    [3, 4, 5],
+    [6, 7, 8],
+    [0, 3, 6], // Вертикали
+    [1, 4, 7],
+    [2, 5, 8],
+    [0, 4, 8], // Диагонали
     [2, 4, 6]
 ];
 
@@ -48,11 +50,14 @@ cells.forEach(cell => {
     });
 });
 
-// Функция фиксации хода на экране и в памяти
+// Функция фиксации хода на экране и в памяти (ВОЗВРАЩЕНЫ ЦВЕТА И КЛАССЫ)
 function makeMove(cell, cellIndex) {
     gameState[cellIndex] = currentPlayer;
     cell.innerText = currentPlayer;
     cell.classList.add('taken');
+    
+    // Добавляем класс стиля в нижнем регистре ('x' или 'o') для правильного цвета
+    cell.classList.add(currentPlayer.toLowerCase());
     
     // Смена текущего игрока
     currentPlayer = currentPlayer === "X" ? "O" : "X";
@@ -67,7 +72,7 @@ socket.on('server-move', (cellIndex) => {
     }
 });
 
-// Получение индекса выигрышной комбинации для отрисовки линии
+// Получение индекса выигрышной комбинации для линии
 function getWinningConditionIndex() {
     for (let i = 0; i < winningConditions.length; i++) {
         const [a, b, c] = winningConditions[i];
@@ -79,9 +84,10 @@ function getWinningConditionIndex() {
     return -1;
 }
 
-// Проверка условий окончания игры
+// Проверка условий окончания игры (ИСПРАВЛЕНО)
 function checkWin() {
     let roundWon = false;
+    let winConditionIndex = -1;
 
     for (let i = 0; i < winningConditions.length; i++) {
         const winCondition = winningConditions[i];
@@ -94,16 +100,21 @@ function checkWin() {
         }
         if (a === b && b === c) {
             roundWon = true;
+            winConditionIndex = i;
             break;
         }
     }
 
     if (roundWon) {
-        // Меняем обратно игрока, чтобы узнать, кто именно сделал победный ход
         const winner = currentPlayer === "X" ? "O" : "X";
         statusText.innerText = winner === myRole ? 'Вы победили!' : `Победил ${winner}!`;
         gameActive = false;
         
+        // Отрисовка линии локально
+        if (typeof drawWinningLine === 'function' && winConditionIndex !== -1) {
+            drawWinningLine(winConditionIndex);
+        }
+
         // Показываем кнопку реванша
         resetBtn.style.display = 'block';
         return true;
@@ -128,7 +139,7 @@ socket.on('server-win', (conditionIndex) => {
     const winner = currentPlayer === "X" ? "O" : "X";
     statusText.innerText = winner === myRole ? 'Вы победили!' : `Победил ${winner}!`;
     
-    // Функция отрисовки линии из вашего файла line.js
+    // Функция отрисовки линии из файла line.js
     if (typeof drawWinningLine === 'function') {
         drawWinningLine(conditionIndex);
     }
@@ -139,7 +150,6 @@ socket.on('server-win', (conditionIndex) => {
 
 // === СЕТЕВАЯ ЛОГИКА РОЛЕЙ ===
 
-// Присвоение роли при подключении к серверу
 socket.on('player-role', (role) => {
     myRole = role;
     if (role === 'viewer') {
@@ -147,59 +157,51 @@ socket.on('player-role', (role) => {
         gameActive = false;
     } else {
         statusText.innerText = `Вы играете за: ${myRole}. Ожидание соперника...`;
-        gameActive = false; // Ждем второго игрока
+        gameActive = false; 
     }
 });
 
-// Старт матча, когда зашли оба игрока
 socket.on('game-start', (msg) => {
     gameActive = true;
     statusText.innerText = currentPlayer === myRole ? 'Ваш ход!' : 'Ход соперника...';
 });
 
-// Если соперник отключился во время игры
 socket.on('player-disconnected', (msg) => {
     statusText.innerText = msg;
     gameActive = false;
     resetBtn.style.display = 'none';
 });
 
-// === СЕТЕВАЯ ЛОГИКА КНОПКИ НАЧАТЬ ЗАНОВО ===
+// === СЕТЕВАЯ ЛОГИКА КНОПКИ РЕВАНША ===
 
-// Нажатие на кнопку реванша отправляет голос на сервер
 resetBtn.addEventListener('click', () => {
     socket.emit('request-restart');
     resetBtn.innerText = 'Ожидание соперника...';
     resetBtn.disabled = true;
 });
 
-// Соперник нажал кнопку раньше нас
 socket.on('opponent-wants-restart', (msg) => {
     statusText.innerText = msg;
 });
 
-// Сервер подтвердил реванш от обоих игроков — очищаем всё
 socket.on('server-restart', () => {
-    // Прячем и сбрасываем состояние кнопки
     resetBtn.style.display = 'none';
     resetBtn.innerText = 'Начать заново';
     resetBtn.disabled = false;
 
-    // Очищаем переменные состояния
     gameState = ["", "", "", "", "", "", "", "", ""];
-    currentPlayer = "X"; // Сброс на первый ход Х
+    currentPlayer = "X"; 
     gameActive = true;
 
-    // Корректируем статус-бар
     statusText.innerText = currentPlayer === myRole ? 'Ваш ход!' : 'Ход соперника...';
 
-    // Очищаем крестики-нолики на экране
+    // Очищаем ячейки на экране (ИСПРАВЛЕНО: Стираем классы цвета 'x' и 'o')
     cells.forEach(cell => {
         cell.innerText = "";
-        cell.classList.remove('taken');
+        cell.classList.remove('taken', 'x', 'o');
     });
 
-    // Очищаем холст (canvas) с победной линией
+    // Очищаем canvas с победной линией
     const canvas = document.getElementById('line-canvas');
     if (canvas) {
         const ctx = canvas.getContext('2d');
