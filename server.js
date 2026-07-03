@@ -10,6 +10,7 @@ const io = require('socket.io')(http, {
 app.use(express.static(__dirname));
 
 let players = {}; // Объект для хранения игроков: { socketId: 'X' или 'O' }
+let restartRequests = []; // Сюда будем сохранять ID игроков, нажавших "Реванш"
 
 io.on('connection', (socket) => {
     console.log('Пользователь подключился: ' + socket.id);
@@ -45,6 +46,24 @@ io.on('connection', (socket) => {
         socket.broadcast.emit('server-win', conditionIndex);
     });
 
+// Обработка запроса на реванш
+socket.on('request-restart', () => {
+    if (!players[socket.id]) return; // Зрители не голосуют
+
+    if (!restartRequests.includes(socket.id)) {
+        restartRequests.push(socket.id);
+    }
+
+    if (restartRequests.length === 1) {
+        // Говорим второму игроку, что оппонент готов к реваншу
+        socket.broadcast.emit('opponent-wants-restart', 'Соперник хочет начать заново!');
+    } else if (restartRequests.length === 2) {
+        restartRequests = []; // Сбрасываем счетчик
+        io.emit('server-restart'); // Команда обоим клиентам очистить поле
+    }
+});
+
+
     // Очистка при обновлении страницы или дисконнекте
     socket.on('disconnect', () => {
         console.log('Пользователь отключился: ' + socket.id);
@@ -53,13 +72,13 @@ io.on('connection', (socket) => {
             delete players[socket.id];
             io.emit('player-disconnected', 'Ваш соперник ушел. Игра окончена.');
             players = {}; // Обнуляем комнату для корректного перезапуска при F5
+            restartRequests = [];
         }
     });
 });
 
 // Запуск сервера на порту 3000
 const PORT = process.env.PORT || 3000;
-
 http.listen(PORT, () => {
     console.log(`Сервер запущен на порту ${PORT}`);
 });

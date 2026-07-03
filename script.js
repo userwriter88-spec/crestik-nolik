@@ -185,6 +185,7 @@ function checkForWinner() {
 
     currentPlayer = currentPlayer === "X" ? "O" : "X";
     updateStatusMessage();
+    document.getElementById('reset-btn').style.display = 'block';
 }
 
 function restartGame() {
@@ -229,3 +230,47 @@ function resetScore() {
 
 cells.forEach(cell => cell.addEventListener('click', handleCellClick));
 restartBtn.addEventListener('click', restartGame);
+
+// Клик по кнопке "Начать заново" отправляет запрос на сервер
+document.getElementById('reset-btn').addEventListener('click', () => {
+    socket.emit('request-restart');
+    document.getElementById('reset-btn').innerText = 'Ожидание соперника...';
+    document.getElementById('reset-btn').disabled = true;
+});
+
+// Если соперник нажал кнопку раньше вас
+socket.on('opponent-wants-restart', (msg) => {
+    statusText.innerText = msg;
+});
+
+// Сервер подтвердил, что оба игрока нажали кнопку
+socket.on('server-restart', () => {
+    // Возвращаем кнопку в исходное состояние и прячем её
+    const resetBtn = document.getElementById('reset-btn');
+    resetBtn.style.display = 'none';
+    resetBtn.innerText = 'Начать заново';
+    resetBtn.disabled = false;
+
+    // Очищаем массив ходов на клиенте
+    gameState = ["", "", "", "", "", "", "", "", ""];
+    gameActive = true;
+
+    // Делаем все ячейки визуально пустыми
+    cells.forEach(cell => {
+        cell.innerText = "";
+        cell.classList.remove('taken');
+    });
+
+    // Сбрасываем текст статуса в зависимости от того, чья сейчас очередь
+    // По умолчанию в вашей игре первый ход всегда за X
+    statusText.innerText = currentPlayer === 'X' ? 'Ваш ход (X)' : 'Ход соперника (O)';
+
+    // ОЧИСТКА ЛИНИИ ПОБЕДЫ:
+    // В вашей игре за линии отвечает canvas. Чтобы стереть линию, очищаем его:
+    const canvas = document.getElementById('line-canvas');
+    if (canvas) {
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+});
+
