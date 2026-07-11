@@ -1,76 +1,94 @@
 const express = require('express');
 const app = express();
-const server = require('http').createServer(app);
-const io = require('socket.io')(server);
+const http = require('http').createServer(app);
+const io = require('socket.io')(http);
 
 app.use(express.static(__dirname));
 
-let players = {};
-let restartRequests = []; // Массив для сбора голосов за реванш
+let players = {}; 
+
+// === ГЛОБАЛЬНЫЙ СЧЁТ НА СЕРВЕРЕ ===
+let serverScore = {
+    X: 0,
+    O: 0,
+    draws: 0
+};
 
 io.on('connection', (socket) => {
     console.log('Пользователь подключился: ' + socket.id);
 
-    // Распределение ролей
-    let hasX = Object.values(players).includes('X');
-    let hasO = Object.values(players).includes('O');
-
-    if (!hasX) {
-        players[socket.id] = 'X';
+    // 1. ПУЛЕНЕПРОБИВАЕМОЕ РАСПРЕДЕЛЕНИЕ РОЛЕЙ
+    // Сначала проверяем, не освободилось ли место X или O
+    if (!players['X']) {
+        players['X'] = socket.id;
+        socket.role = 'X'; // Записываем роль прямо в объект сокета
         socket.emit('player-role', 'X');
-    } else if (!hasO) {
-        players[socket.id] = 'O';
+    } else if (!players['O']) {
+        players['O'] = socket.id;
+        socket.role = 'O'; // Записываем роль прямо в объект сокета
         socket.emit('player-role', 'O');
     } else {
+        socket.role = 'viewer';
         socket.emit('player-role', 'viewer');
     }
 
-    hasX = Object.values(players).includes('X');
-    hasO = Object.values(players).includes('O');
-    if (hasX && hasO) {
-        io.emit('game-start', 'Игра началась!');
+    // Если оба основных игрока на месте — запускаем игру
+    if (players['X'] && players['O']) {
+        io.emit('game-start', 'Игра началась! Ход Х');
     }
 
-    // Пересылка ходов
-    socket.on('player-move', (cellIndex) => {
-        socket.broadcast.emit('server-move', cellIndex);
+    // Сразу отправляем текущий счёт сервера
+    socket.emit('update-server-score', serverScore);
+
+    // Обработка ходов
+    socket.on('player-move', (data) => {
+        socket.broadcast.emit('server-move', data);
     });
 
-    // Синхронизация победы
-    socket.on('player-won', (conditionIndex) => {
-        socket.broadcast.emit('server-win', conditionIndex);
-    });
-
-    // ЛОГИКА РЕВАНША
-    socket.on('request-restart', () => {
-        if (!players[socket.id]) return; // Зрители не голосуют
-
-        if (!restartRequests.includes(socket.id)) {
-            restartRequests.push(socket.id);
+    // Обновление счёта при завершении игры
+    socket.on('game-over-winner', (winner) => {
+        if (winner === 'X' || winner === 'O') {
+            serverScore[winner]++;
+        } else if (winner === 'draw') {
+            serverScore.draws++;
         }
+        io.emit('update-server-score', serverScore);
+    });
 
-        if (restartRequests.length === 1) {
-            // Говорим оппоненту, что первый игрок нажал "Начать заново"
-            socket.broadcast.emit('opponent-wants-restart', 'Соперник хочет начать заново!');
-        } else if (restartRequests.length === 2) {
-            restartRequests = []; // Обнуляем голоса
-            io.emit('server-restart'); // Команда обоим клиентам на полный сброс
+    // Игрок предложил начать заново
+    socket.on('player-restart-request', () => {
+        socket.broadcast.emit('partner-wants-restart');
+    });
+
+    // Получен ответ от партнера
+    socket.on('restart-decision', (agreed) => {
+        if (agreed) {
+            io.emit('game-force-restart');
+        } else {
+            socket.broadcast.emit('partner-refused-restart');
         }
     });
 
-    // Отключение
+    // 2. ИДЕАЛЬНАЯ ОЧИСТКА ПРИ ДИСКОННЕКТЕ
     socket.on('disconnect', () => {
-        console.log('Пользователь отключился: ' + socket.id);
-        if (players[socket.id]) {
-            delete players[socket.id];
+        console.log(`Пользователь отключился: ${socket.id} (Роль: ${socket.role})`);
+        
+        // Проверяем роль, которую мы привязали к сокету при старте
+        if (socket.role === 'X' || socket.role === 'O') {
+            // Освобождаем ТОЛЬКО эту роль
+            delete players[socket.role];
+            
+            // Оповещаем оставшегося игрока
             io.emit('player-disconnected', 'Ваш соперник ушел. Игра окончена.');
-            players = {};
-            restartRequests = []; // Сброс при выходе игрока
+            
+            // Сбрасываем счёт для следующей игровой сессии
+            serverScore = { X: 0, O: 0, draws: 0 };
         }
     });
 });
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
+
+http.listen(3000, () => {
     console.log(`Сервер запущен на порту ${PORT}`);
 });

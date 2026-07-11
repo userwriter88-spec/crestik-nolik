@@ -261,3 +261,61 @@ h1 {
     transform: translateX(24px);
 }
 
+/* Общие стили для кнопок подтверждения в строке статуса */
+.btn-choice {
+    margin-top: 5px;
+    padding: 6px 20px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #fff;
+    border: none;
+    border-radius: 20px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: inline-block;
+}
+
+/* Кнопка "Да" — синий градиент, как на главной кнопке */
+#restart-yes {
+    margin-left: 12px;
+    background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
+    box-shadow: 0 4px 10px rgba(52, 152, 219, 0.3);
+}
+
+/* Кнопка "Нет" — сделаем мягкой красной, чтобы визуально отличалась */
+#restart-no {
+    margin-left: 8px;
+    background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+    box-shadow: 0 4px 10px rgba(231, 76, 60, 0.3);
+}
+
+/* Эффекты при наведении */
+.btn-choice:hover {
+    transform: translateY(-1px);
+}
+#restart-yes:hover {
+    box-shadow: 0 6px 15px rgba(52, 152, 219, 0.45);
+}
+#restart-no:hover {
+    box-shadow: 0 6px 15px rgba(231, 76, 60, 0.45);
+}
+
+/* Эффект при клике */
+.btn-choice:active {
+    transform: translateY(1px);
+}
+#restart-yes:active {
+    box-shadow: 0 2px 5px rgba(52, 152, 219, 0.3);
+}
+#restart-no:active {
+    box-shadow: 0 2px 5px rgba(231, 76, 60, 0.3);
+}
+
+/* Чтобы текст в статусе выравнивался по центру вместе с кнопками */
+#status {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 5px;
+}

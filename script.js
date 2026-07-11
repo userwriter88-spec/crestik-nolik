@@ -1,209 +1,332 @@
-const socket = io();
+// Подключаемся к нашему серверу Node.js
+const socket = io({
+    transports: ['polling']
+});
 
+const board = document.getElementById('board');
 const cells = document.querySelectorAll('.cell');
 const statusText = document.getElementById('status');
-const resetBtn = document.getElementById('reset-btn');
+const restartBtn = document.getElementById('restart');
+const strikeLine = document.getElementById('strike-line');
+const fireworks = document.getElementById('fireworks');
+const modeToggle = document.getElementById('mode-toggle');
 
-let currentPlayer = "X";
+let currentPlayer = 'X';
 let gameState = ["", "", "", "", "", "", "", "", ""];
-let gameActive = true;
-let myRole = ""; // 'X', 'O' или 'viewer'
+let isGameActive = true; // Для ИИ ставим true по умолчанию
+let gameMode = 'pvp'; // 'pvp' (сеть) или 'pve' (против ИИ)
 
-// Полный и точный массив комбинаций для line.js
-const winningConditions = [
-    [0, 1, 2], // Горизонтали
-    [3, 4, 5],
-    [6, 7, 8],
-    [0, 3, 6], // Вертикали
-    [1, 4, 7],
-    [2, 5, 8],
-    [0, 4, 8], // Диагонали
-    [2, 4, 6]
-];
+// Сетевые переменные
+let myRole = 'X'; // Для ИИ мы всегда Х
+let isMyTurn = true; // Для ИИ мы ходим первыми
 
-// Обработка клика по ячейке
-cells.forEach(cell => {
-    cell.addEventListener('click', () => {
-        const cellIndex = cell.getAttribute('data-index');
+let winsX = 0; let winsO = 0; let draws = 0;
+const scoreXText = document.getElementById('scoreX');
+const scoreOText = document.getElementById('scoreO');
+const scoreDrawsText = document.getElementById('scoreDraws');
 
-        // Ходить можно, только если игра активна, ячейка пуста и сейчас именно ваш ход
-        if (!gameActive || gameState[cellIndex] !== "" || currentPlayer !== myRole) {
-            return;
-        }
+function playSound(type) {
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = audioCtx.createOscillator();
+    const gainNode = audioCtx.createGain();
+    osc.connect(gainNode); gainNode.connect(audioCtx.destination);
+    const now = audioCtx.currentTime;
+    if (type === 'clickX') {
+        osc.type = 'sine'; osc.frequency.setValueAtTime(600, now); gainNode.gain.setValueAtTime(0.1, now);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.1); osc.start(now); osc.stop(now + 0.1);
+    } else if (type === 'clickO') {
+        osc.type = 'sine'; osc.frequency.setValueAtTime(450, now); gainNode.gain.setValueAtTime(0.1, now);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.1); osc.start(now); osc.stop(now + 0.1);
+    } else if (type === 'win') {
+        osc.type = 'triangle'; gainNode.gain.setValueAtTime(0.15, now); gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.6);
+        osc.frequency.setValueAtTime(523.25, now); osc.frequency.setValueAtTime(659.25, now + 0.15); osc.frequency.setValueAtTime(783.99, now + 0.3);
+        osc.start(now); osc.stop(now + 0.6);
+    }
+}
 
-        // Фиксируем ход локально
-        makeMove(cell, cellIndex);
+// === СЕТЕВАЯ ЛОГИКА ===
 
-        // Отправляем ход сопернику через сервер
-        socket.emit('player-move', cellIndex);
+// 1. Получаем роль от сервера при входе
+socket.on('player-role', (role) => {
+    // Слушаем сервер, только если мы в режиме СЕТЕВОЙ игры
+    if (gameMode !== 'pvp') return;
+    
+    myRole = role;
+    if (myRole === 'viewer') {
+        statusText.innerText = 'Комната полная. Вы — наблюдатель';
+    } else {
+        statusText.innerText = `Ожидание соперника... Вы играете за: ${myRole}`;
+        isGameActive = false; // Ждем старта от сервера
 
-        // Проверяем победу после своего хода
-        const isWin = checkWin();
+        // Переопределяем очередь ходов при перезаходе: X всегда ходит первым
+        isMyTurn = (myRole === 'X'); 
+    }
+});
+
+// 2. Сервер сообщает, что подключилось двое и игра началась
+socket.on('game-start', (msg) => {
+    if (gameMode !== 'pvp') return;
+    isGameActive = true;
+    isMyTurn = (myRole === 'X');
+    updateStatusMessage();
+});
+
+// 3. Принимаем ход от соперника из сети
+socket.on('server-move', (cellIndex) => {
+    if (gameMode !== 'pvp') return;
+    makeMove(cellIndex);
+    isMyTurn = true; 
+    updateStatusMessage();
+});
+
+// 4. Если соперник отключился
+socket.on('player-disconnected', (msg) => {
+    if (gameMode !== 'pvp') return;
+    statusText.innerText = msg;
+    isGameActive = false;
+});
+
+// 5. Партнер предлагает начать новую партию
+socket.on('partner-wants-restart', () => {
+    if (gameMode !== 'pvp') return;
+
+    // Выводим текст и добавляем класс btn-choice для красивого стиля
+    statusText.innerHTML = `
+        <span>Соперник предлагает начать заново:</span>
+        <button id="restart-yes" class="btn-choice">Да</button>
+        <button id="restart-no" class="btn-choice">Нет</button>
+    `;
+
+    // Навешиваем событие на кнопку "Да"
+    document.getElementById('restart-yes').addEventListener('click', () => {
+        socket.emit('restart-decision', true);
+    });
+
+    // Навешиваем событие на кнопку "Нет"
+    document.getElementById('restart-no').addEventListener('click', () => {
+        socket.emit('restart-decision', false);
         
-        // Если выиграли — отправляем серверу индекс комбинации для линии
-        if (isWin) {
-            const conditionIndex = getWinningConditionIndex();
-            if (conditionIndex !== -1) {
-                socket.emit('player-won', conditionIndex);
+        // Очищаем экран для того, кто отказался
+        document.body.innerHTML = "<h1 style='text-align:center; margin-top:20%; font-family:sans-serif; color: #2c3e50;'>Вы отказались от игры. Вкладку можно закрыть.</h1>";
+    });
+});
+
+// 6. Получена команда от сервера на запуск новой партии (без перезагрузки страницы!)
+socket.on('game-force-restart', () => {
+    if (gameMode !== 'pvp') return;
+    clearBoardForNewGame();
+});
+
+// 7. Если соперник нажал "Нет" — выводим сообщение инициатору
+socket.on('partner-refused-restart', () => {
+    if (gameMode !== 'pvp') return;
+    statusText.innerText = "Соперник отказался от новой игры";
+    isGameActive = false;
+});
+
+// 8. Получение актуального счёта от сервера
+socket.on('update-server-score', (score) => {
+    if (gameMode !== 'pvp') return;
+
+    // Синхронизируем переменные клиента с сервером
+    winsX = score.X;
+    winsO = score.O;
+    draws = score.draws;
+
+    // Выводим в интерфейс
+    scoreXText.innerText = winsX;
+    scoreOText.innerText = winsO;
+    scoreDrawsText.innerText = draws;
+});
+
+// === ОБЩАЯ ЛОГИКА ИНТЕРФЕЙСА ===
+
+function updateStatusMessage() {
+    if (!isGameActive) return;
+    
+    if (gameMode === 'pve') {
+        statusText.innerText = `Ходят ${currentPlayer}`;
+    } else {
+        if (isMyTurn) {
+            statusText.innerText = `Ваш ход (${myRole})`;
+        } else {
+            statusText.innerText = `Ход соперника (${currentPlayer})`;
+        }
+    }
+}
+
+function handleCellClick(event) {
+    const clickedCell = event.target;
+    const clickedCellIndex = parseInt(clickedCell.getAttribute('data-index'));
+
+    if (gameState[clickedCellIndex] !== "" || !isGameActive) return;
+
+    // В СЕТЕВОМ режиме проверяем, наш ли сейчас ход
+    if (gameMode === 'pvp' && !isMyTurn) return;
+    
+    // В режиме ИИ блокируем клики, когда думает бот (ходит за О)
+    if (gameMode === 'pve' && currentPlayer === 'O') return;
+
+    // Делаем ход локально у себя на экране
+    makeMove(clickedCellIndex);
+    
+    if (gameMode === 'pvp') {
+        // Отправляем ход в сеть
+        socket.emit('player-move', clickedCellIndex);
+        isMyTurn = false;
+        updateStatusMessage();
+    } else if (gameMode === 'pve' && isGameActive && currentPlayer === 'O') {
+        // Если играем с ИИ и раунд продолжается — даем ход боту
+        setTimeout(() => {
+            const aiIndex = getBestMove(gameState);
+            if (aiIndex !== null) {
+                makeMove(aiIndex);
+            }
+        }, 500);
+    }
+}
+
+function makeMove(index) {
+    gameState[index] = currentPlayer;
+    const cell = document.querySelector(`.cell[data-index="${index}"]`);
+    cell.innerText = currentPlayer;
+    
+    if (currentPlayer === 'X') {
+        cell.classList.add('x-player');
+        playSound('clickX');
+    } else {
+        cell.classList.add('o-player');
+        playSound('clickO');
+    }
+
+    checkForWinner();
+}
+
+function checkLine(a, b, c) {
+    return gameState[a] !== "" && gameState[a] === gameState[b] && gameState[b] === gameState[c];
+}
+
+function checkForWinner() {
+    let type = "";
+    if (checkLine(0, 1, 2)) type = "horizontal-1";
+    else if (checkLine(3, 4, 5)) type = "horizontal-2";
+    else if (checkLine(6, 7, 8)) type = "horizontal-3";
+    else if (checkLine(0, 3, 6)) type = "vertical-1";
+    else if (checkLine(1, 4, 7)) type = "vertical-2";
+    else if (checkLine(2, 5, 8)) type = "vertical-3";
+    else if (checkLine(0, 4, 8)) type = "main-diagonal";
+    else if (checkLine(2, 4, 6)) type = "side-diagonal";
+
+    if (type !== "") {
+        statusText.innerText = `Игрок ${currentPlayer} победил!`;
+        isGameActive = false;
+        drawStrikeLine(type); // Вызываем функцию из line.js
+        fireworks.style.display = 'block';
+        playSound('win');
+
+        // === ЛОГИКА ДЛЯ СЕТИ (Отправка победы на сервер) ===
+        if (gameMode === 'pvp') {
+            // Чтобы сервер не получал два запроса, отправляет только тот, кто сам сделал этот победный ход
+            if (myRole === currentPlayer) {
+                socket.emit('game-over-winner', currentPlayer);
+            }
+        } else {
+            // Локальный счет (для PvE режима с ботом)
+            if (currentPlayer === 'X') {
+                winsX++; scoreXText.innerText = winsX;
+            } else {
+                winsO++; scoreOText.innerText = winsO;
             }
         }
-    });
-});
-
-// Функция фиксации хода на экране и в памяти (ИСПРАВЛЕНО: ТОЧНЫЕ КЛАССЫ ИЗ ВЕТКИ MAIN)
-function makeMove(cell, cellIndex) {
-    gameState[cellIndex] = currentPlayer;
-    cell.innerText = currentPlayer;
-    cell.classList.add('taken');
-    
-    // Добавляем оригинальные классы из вашей рабочей ветки main
-    if (currentPlayer === "X") {
-        cell.classList.add('cross');   // Дает синий цвет
-    } else {
-        cell.classList.add('circle');  // Дает красный цвет
-    }
-    
-    // Смена текущего игрока
-    currentPlayer = currentPlayer === "X" ? "O" : "X";
-    statusText.innerText = currentPlayer === myRole ? 'Ваш ход!' : 'Ход соперника...';
-}
-
-// Ловим ход соперника с сервера
-socket.on('server-move', (cellIndex) => {
-    const cell = document.querySelector(`[data-index='${cellIndex}']`);
-    if (cell) {
-        makeMove(cell, cellIndex);
-    }
-});
-
-// Получение индекса выигрышной комбинации для линии
-function getWinningConditionIndex() {
-    for (let i = 0; i < winningConditions.length; i++) {
-        const [a, b, c] = winningConditions[i];
-        const val = gameState[a];
-        if (val !== "" && val === gameState[b] && val === gameState[c]) {
-            return i;
-        }
-    }
-    return -1;
-}
-
-// Проверка условий окончания игры (ИСПРАВЛЕНО: ИНТЕГРАЦИЯ С LINE.JS)
-function checkWin() {
-    let roundWon = false;
-    let winConditionIndex = -1;
-
-    for (let i = 0; i < winningConditions.length; i++) {
-        const winCondition = winningConditions[i];
-        let a = gameState[winCondition[0]];
-        let b = gameState[winCondition[1]];
-        let c = gameState[winCondition[2]];
-
-        if (a === '' || b === '' || c === '') {
-            continue;
-        }
-        if (a === b && b === c) {
-            roundWon = true;
-            winConditionIndex = i;
-            break;
-        }
+        return;
     }
 
-    if (roundWon) {
-        const winner = currentPlayer === "X" ? "O" : "X";
-        statusText.innerText = winner === myRole ? 'Вы победили!' : `Победил ${winner}!`;
-        gameActive = false;
-        
-        // Отрисовка линии из вашего файла line.js локально
-        if (typeof drawWinningLine === 'function' && winConditionIndex !== -1) {
-            drawWinningLine(winConditionIndex);
-        }
-
-        // Показываем кнопку реванша
-        resetBtn.style.display = 'block';
-        return true;
-    }
-
-    // Проверка на ничью
     if (!gameState.includes("")) {
         statusText.innerText = "Ничья!";
-        gameActive = false;
-        resetBtn.style.display = 'block';
-        return true;
+        isGameActive = false;
+        
+        // === ЛОГИКА ДЛЯ СЕТИ (Отправка ничьей на сервер) ===
+        if (gameMode === 'pvp') {
+            // Отправляет только тот, чей ход только что был (чтобы не дублировать)
+            if (isMyTurn) {
+                socket.emit('game-over-winner', 'draw');
+            }
+        } else {
+            // Локальный счет для PvE
+            draws++; scoreDrawsText.innerText = draws;
+        }
+        return;
     }
 
-    return false;
+    currentPlayer = currentPlayer === "X" ? "O" : "X";
+    updateStatusMessage();
 }
 
-// Ловим анимацию победной линии от соперника (ИСПРАВЛЕНО)
-socket.on('server-win', (conditionIndex) => {
-    gameActive = false;
-    const winner = currentPlayer === "X" ? "O" : "X";
-    statusText.innerText = winner === myRole ? 'Вы победили!' : `Победил ${winner}!`;
-    
-    // Отрисовка линии у того, кто проиграл матч
-    if (typeof drawWinningLine === 'function') {
-        drawWinningLine(conditionIndex);
-    }
-    
-    resetBtn.style.display = 'block';
-});
-
-// === СЕТЕВАЯ ЛОГИКА РОЛЕЙ ===
-socket.on('player-role', (role) => {
-    myRole = role;
-    if (role === 'viewer') {
-        statusText.innerText = 'Вы зритель. Игра уже идет.';
-        gameActive = false;
-    } else {
-        statusText.innerText = `Вы играете за: ${myRole}. Ожидание соперника...`;
-        gameActive = false; 
-    }
-});
-
-socket.on('game-start', (msg) => {
-    gameActive = true;
-    statusText.innerText = currentPlayer === myRole ? 'Ваш ход!' : 'Ход соперника...';
-});
-
-socket.on('player-disconnected', (msg) => {
-    statusText.innerText = msg;
-    gameActive = false;
-    resetBtn.style.display = 'none';
-});
-
-// === СЕТЕВАЯ ЛОГИКА КНОПКИ НАЧАТЬ ЗАНОВО ===
-resetBtn.addEventListener('click', () => {
-    socket.emit('request-restart');
-    resetBtn.innerText = 'Ожидание соперника...';
-    resetBtn.disabled = true;
-});
-
-socket.on('opponent-wants-restart', (msg) => {
-    statusText.innerText = msg;
-});
-
-socket.on('server-restart', () => {
-    resetBtn.style.display = 'none';
-    resetBtn.innerText = 'Начать заново';
-    resetBtn.disabled = false;
-
+function restartGame() {
+    currentPlayer = 'X';
     gameState = ["", "", "", "", "", "", "", "", ""];
-    currentPlayer = "X"; 
-    gameActive = true;
 
-    statusText.innerText = currentPlayer === myRole ? 'Ваш ход!' : 'Ход соперника...';
+    if (gameMode === 'pve') {
+        isGameActive = true;
+        myRole = 'X';
+        isMyTurn = true;
+        statusText.innerText = `Ходят ${currentPlayer}`;
+        
+        cells.forEach(cell => {
+            cell.innerText = "";
+            cell.classList.remove('x-player', 'o-player');
+        });
+        strikeLine.style.display = 'none';
+        fireworks.style.display = 'none';
+    } else {
+        // === ЛОГИКА ДЛЯ СЕТИ ===
+        isGameActive = false; 
+        statusText.innerText = "Ожидаем ответ соперника";
+        
+        // Отправляем запрос на сервер
+        socket.emit('player-restart-request');
+    }
+}
 
-    // Очищаем ячейки (удаляем точные классы cross и circle)
+// Функция, которая полностью сбрасывает состояние игры на клиенте
+function clearBoardForNewGame() {
+    // 1. Сбрасываем логику ходов и массив поля
+    currentPlayer = 'X';
+    gameState = ["", "", "", "", "", "", "", "", ""];
+    isGameActive = true;
+    
+    // 2. Определяем, твой ли ход (Игрок X всегда ходит первым)
+    isMyTurn = (myRole === 'X'); 
+
+    // 3. Визуально очищаем все ячейки поля
     cells.forEach(cell => {
         cell.innerText = "";
-        cell.classList.remove('taken', 'cross', 'circle');
+        cell.classList.remove('x-player', 'o-player');
     });
 
-    // Очищаем canvas с линией победы из line.js
-    const canvas = document.getElementById('line-canvas');
-    if (canvas) {
-        const ctx = canvas.getContext('2d');
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+    // 4. Прячем победную линию, салюты и обновляем статусную строку
+    if (typeof strikeLine !== 'undefined') strikeLine.style.display = 'none';
+    if (typeof fireworks !== 'undefined') fireworks.style.display = 'none';
+    
+    updateStatusMessage();
+}
+
+// Логика переключателя
+modeToggle.addEventListener('change', () => {
+    if (modeToggle.checked) {
+        gameMode = 'pve'; // Включаем ИИ
+    } else {
+        gameMode = 'pvp'; // Включаем Сеть
+        window.location.reload(); // Перезагружаем для чистого сетевого коннекта
     }
+    resetScore();
+    restartGame();
 });
+
+function resetScore() {
+    winsX = 0; winsO = 0; draws = 0;
+    scoreXText.innerText = 0; scoreOText.innerText = 0; scoreDrawsText.innerText = 0;
+}
+
+cells.forEach(cell => cell.addEventListener('click', handleCellClick));
+restartBtn.addEventListener('click', restartGame);
