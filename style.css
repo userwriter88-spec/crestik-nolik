@@ -319,3 +319,176 @@ h1 {
     flex-wrap: wrap;
     gap: 5px;
 }
+
+/* === ОКОНЧАТЕЛЬНЫЙ АДАПТИВНЫЙ ЧАТ (ФИКСИРОВАННЫЙ ВИДЖЕТ) === */
+
+/* Общая обёртка больше не сжимает и не двигает игру */
+.main-wrapper {
+    width: 100%;
+    margin: 0 auto;
+    padding: 20px;
+    box-sizing: border-box;
+}
+
+/* Контейнер игры: возвращаем его в обычный поток, чтобы он встал строго по центру */
+.game-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin: 0 auto;
+}
+
+/* КРУГЛАЯ КНОПКА ВЫЗОВА ЧАТА (ТЕПЕРЬ ДЛЯ ВСЕХ УСТРОЙСТВ) */
+#chat-toggle-btn {
+    display: block; /* Показываем кнопку и на ПК, и на смартфонах */
+    position: fixed;
+    bottom: 25px;
+    right: 25px;
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background: #3182ce;
+    color: white;
+    border: none;
+    font-size: 26px;
+    cursor: pointer;
+    box-shadow: 0 10px 25px -5px rgba(49, 130, 206, 0.4);
+    z-index: 999;
+}
+
+/* Счётчик непрочитанных сообщений на кнопке */
+#chat-badge {
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    background: #e53e3e;
+    color: white;
+    font-size: 11px;
+    padding: 3px 7px;
+    border-radius: 12px;
+    font-weight: bold;
+    border: 2px solid #3182ce;
+}
+.badge-hidden { display: none; }
+
+/* КОНТЕЙНЕР ЧАТА (ФИКСИРОВАННЫЙ СПРАВА) */
+#chat-container {
+    position: fixed;
+    bottom: 100px; /* Появляется чуть выше круглой кнопки */
+    right: 25px;
+    width: 340px;
+    height: 440px;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 16px;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.15);
+    display: flex;
+    flex-direction: column;
+    padding: 16px;
+    font-family: sans-serif;
+    box-sizing: border-box;
+    z-index: 1000;
+}
+
+#chat-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    border-bottom: 1px solid #edf2f7;
+    padding-bottom: 8px;
+}
+
+#chat-header h3 { margin: 0; font-size: 16px; color: #2d3748; }
+
+/* Крестик закрытия теперь виден на всех устройствах, чтобы сворачивать чат */
+#chat-close-btn {
+    display: block;
+    background: none;
+    border: none;
+    font-size: 28px;
+    cursor: pointer;
+    color: #a0aec0;
+    line-height: 1;
+}
+
+#chat-messages {
+    flex: 1; overflow-y: auto; background: #f7fafc;
+    border-radius: 8px; padding: 10px; margin-bottom: 12px;
+    text-align: left; font-size: 14px; border: 1px solid #edf2f7;
+}
+
+.chat-msg { margin-bottom: 8px; word-break: break-word; }
+.chat-msg-x { color: #e53e3e; font-weight: bold; }
+.chat-msg-o { color: #3182ce; font-weight: bold; }
+.chat-msg-viewer { color: #805ad5; }
+.chat-msg-system { color: #7f8c8d; font-style: italic; }
+
+#chat-input-zone { display: flex; gap: 8px; }
+#chat-input {
+    flex: 1; padding: 10px 14px; border: 1px solid #cbd5e0;
+    border-radius: 8px; font-size: 14px; outline: none;
+}
+#chat-send-btn {
+    padding: 10px 16px; background: #38a169; color: white;
+    border: none; border-radius: 8px; cursor: pointer; font-weight: bold;
+}
+
+/* ЖЁСТКОЕ СКРЫТИЕ ДЛЯ ВСЕХ УСТРОЙСТВ */
+.chat-closed { display: none !important; }
+
+/* === МОБИЛЬНАЯ АДАПТАЦИЯ (ЭКРАНЫ ДО 768px) === */
+@media (max-width: 768px) {
+    /* Меняем расположение игры */
+    .main-wrapper {
+        flex-direction: column;
+        gap: 10px;
+        padding: 10px;
+    }
+
+    /* Круглая кнопка чата на мобилке */
+    #chat-toggle-btn {
+        display: block; position: fixed; bottom: 20px; right: 20px;
+        width: 55px; height: 55px; border-radius: 50%; background: #3182ce;
+        color: white; border: none; font-size: 24px; cursor: pointer;
+        box-shadow: 0 8px 20px rgba(49, 130, 206, 0.4); z-index: 999;
+    }
+
+    /* ЧАТ ПРЕВРАЩАЕТСЯ В ШТОРКУ СНИЗУ */
+    #chat-container {
+        position: fixed;
+        bottom: 0; left: 0; right: 0; top: auto; /* Отменяем полноэкранный режим */
+        width: 100vw;
+        height: 45vh; /* Занимает 45% высоты экрана снизу, оставляя поле открытым сверху */
+        max-width: 100%;
+        border-radius: 20px 20px 0 0; /* Скругляем только верхние углы шторки */
+        box-shadow: 0 -10px 25px rgba(0, 0, 0, 0.15);
+        z-index: 1000;
+        background: #ffffff;
+    }
+
+    /* СТИЛИ ДЛЯ ВСПЛЫВАЮЩЕГО PUSH-УВЕДОМЛЕНИЯ ВВЕРХУ */
+    #chat-toast {
+        position: fixed;
+        top: 15px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(45, 55, 72, 0.95); /* Темный стильный фон */
+        color: white;
+        padding: 10px 20px;
+        border-radius: 30px;
+        font-family: sans-serif;
+        font-size: 14px;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+        z-index: 1001;
+        transition: all 0.3s ease;
+        white-space: nowrap;
+        pointer-events: none; /* Чтобы пуш не мешал кликам, если выскочит на поле */
+    }
+    
+    .toast-hidden {
+        opacity: 0;
+        top: -50px !important; /* Улетает вверх за экран */
+    }
+}
+

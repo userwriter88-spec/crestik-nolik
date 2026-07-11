@@ -387,3 +387,88 @@ function resetScore() {
 
 cells.forEach(cell => cell.addEventListener('click', handleCellClick));
 restartBtn.addEventListener('click', restartGame);
+
+// === ЛОГИКА ЧАТА НА КЛИЕНТЕ ===
+const chatContainer = document.getElementById('chat-container');
+const chatToggleBtn = document.getElementById('chat-toggle-btn');
+const chatCloseBtn = document.getElementById('chat-close-btn');
+const chatBadge = document.getElementById('chat-badge');
+const chatMessages = document.getElementById('chat-messages');
+const chatInput = document.getElementById('chat-input');
+const chatSendBtn = document.getElementById('chat-send-btn');
+const chatToast = document.getElementById('chat-toast'); // Элемент пуша
+
+let unreadCount = 0;
+let isChatOpen = false; 
+chatContainer.classList.add('chat-closed');
+
+// Открыть чат
+chatToggleBtn.addEventListener('click', () => {
+    chatContainer.classList.remove('chat-closed');
+    isChatOpen = true;
+    unreadCount = 0; 
+    chatBadge.classList.add('badge-hidden');
+    chatInput.focus();
+});
+
+// Свернуть чат
+chatCloseBtn.addEventListener('click', () => {
+    chatContainer.classList.add('chat-closed');
+    isChatOpen = false;
+});
+
+// Отправка сообщения
+function sendChatMessage() {
+    const text = chatInput.value.trim();
+    if (text === "") return;
+
+    socket.emit('send-chat-message', text);
+    chatInput.value = "";
+}
+
+chatSendBtn.addEventListener('click', sendChatMessage);
+chatInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') sendChatMessage();
+});
+
+// Принимаем сообщение от сервера
+socket.on('broadcast-chat-message', (data) => {
+    const msgElement = document.createElement('div');
+    msgElement.classList.add('chat-msg');
+
+    let prefix = '';
+    if (data.role === 'X') prefix = '[Игрок X]';
+    else if (data.role === 'O') prefix = '[Игрок O]';
+    else prefix = '[Зритель]';
+
+    msgElement.innerHTML = `<span class="chat-msg-${data.role.toLowerCase()}">${prefix}:</span> ${data.text}`;
+    chatMessages.appendChild(msgElement);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+
+    // ЛОГИКА УВЕДОМЛЕНИЙ ДЛЯ ЗАКРЫТОГО ЧАТА
+    if (!isChatOpen) {
+        const isMobile = window.innerWidth <= 768;
+
+        if (isMobile) {
+            // НА МОБИЛКЕ: Показываем аккуратный всплывающий Push сверху
+            chatToast.innerHTML = `💬 <b>${prefix}:</b> ${data.text}`;
+            chatToast.classList.remove('toast-hidden');
+
+            // Через 4 секунды автоматически прячем уведомление
+            setTimeout(() => {
+                chatToast.classList.add('toast-hidden');
+            }, 4000);
+
+            // Обновляем циферку непрочитанных на круглой кнопке
+            unreadCount++;
+            chatBadge.innerText = unreadCount;
+            chatBadge.classList.remove('badge-hidden');
+        } else {
+            // НА ПК: Оставляем автоматическое открытие, так как там оно не мешает
+            chatContainer.classList.remove('chat-closed');
+            isChatOpen = true;
+        }
+    }
+});
+
+

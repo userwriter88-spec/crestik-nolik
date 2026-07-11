@@ -119,6 +119,22 @@ io.on('connection', (socket) => {
         }
     });
 
+        // === ЛОГИКА ЧАТА НА СЕРВЕРЕ ===
+    socket.on('send-chat-message', (text) => {
+        if (!text || text.trim() === "") return;
+
+        // Защита от взлома верстки (экранирование тегов < и >)
+        const safeText = text.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+        const messageData = {
+            role: socket.role || 'viewer', // Роль отправителя (X, O или viewer)
+            text: safeText
+        };
+
+        // Отправляем сообщение абсолютно ВСЕМ участникам в комнате
+        io.emit('broadcast-chat-message', messageData);
+    });
+
     socket.on('disconnect', () => {
         const role = socket.role;
         console.log(`Пользователь отключился: ${socket.id} (Роль: ${role})`);

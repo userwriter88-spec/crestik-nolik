@@ -10,70 +10,96 @@
 
     <h1>Крестики-Нолики</h1>
 
-    <!-- ИСПРАВЛЕНО: Строка таблицы общего счета добавлена на место -->
-    <div class="score-board">
-        <div>Игрок X: <span id="scoreX">0</span></div>
-        <div>Ничьи: <span id="scoreDraws">0</span></div>
-        <div>Игрок O: <span id="scoreO">0</span></div>
-    </div>
-    
-    <!-- Переключатель режима игры -->
-    <!-- Новый чекбокс-переключатель режима игры -->
-    <div class="toggle-container">
-        <span class="toggle-label">Вдвоем</span>
-        <label class="switch">
-            <input type="checkbox" id="mode-toggle">
-            <span class="slider"></span>
-        </label>
-        <span class="toggle-label">Против ИИ</span>
-    </div>
+    <!-- ГЛАВНАЯ ОБЁРТКА ДЛЯ ИГРЫ И ЧАТА -->
+    <div class="main-wrapper">
 
-    <div id="status">Ходят Х</div>
-    
-    <div class="board-container">
-        <div class="strike-line" id="strike-line"></div>
-        <div class="board" id="board">
-            <div class="cell" data-index="0"></div>
-            <div class="cell" data-index="1"></div>
-            <div class="cell" data-index="2"></div>
-            <div class="cell" data-index="3"></div>
-            <div class="cell" data-index="4"></div>
-            <div class="cell" data-index="5"></div>
-            <div class="cell" data-index="6"></div>
-            <div class="cell" data-index="7"></div>
-            <div class="cell" data-index="8"></div>
+        <!-- Всплывающий пуш для новых сообщений на мобилках -->
+        <div id="chat-toast" class="toast-hidden"></div>
+        
+        <!-- ЛЕВЫЙ БЛОК: ВСЯ ВАША ИГРА -->
+        <div class="game-container">
+            <!-- Таблица общего счета -->
+            <div class="score-board">
+                <div>Игрок X: <span id="scoreX">0</span></div>
+                <div>Ничьи: <span id="scoreDraws">0</span></div>
+                <div>Игрок O: <span id="scoreO">0</span></div>
+            </div>
+            
+            <!-- Переключатель режима игры -->
+            <div class="toggle-container">
+                <span class="toggle-label">Вдвоем</span>
+                <label class="switch">
+                    <input type="checkbox" id="mode-toggle">
+                    <span class="slider"></span>
+                </label>
+                <span class="toggle-label">Против ИИ</span>
+            </div>
+
+            <div id="status">Ходят Х</div>
+            
+            <div class="board-container">
+                <div class="strike-line" id="strike-line"></div>
+                <div class="board" id="board">
+                    <div class="cell" data-index="0"></div>
+                    <div class="cell" data-index="1"></div>
+                    <div class="cell" data-index="2"></div>
+                    <div class="cell" data-index="3"></div>
+                    <div class="cell" data-index="4"></div>
+                    <div class="cell" data-index="5"></div>
+                    <div class="cell" data-index="6"></div>
+                    <div class="cell" data-index="7"></div>
+                    <div class="cell" data-index="8"></div>
+                </div>
+            </div>
+
+            <button id="restart">Начать заново</button>
+
+            <div class="fireworks-container">
+                <svg id="fireworks" width="150" height="150" viewBox="0 0 100 100" style="display: none;">
+                    <circle cx="50" cy="50" r="1" fill="none" stroke="#ff3b30" stroke-width="2" stroke-dasharray="3 3">
+                        <animate attributeName="r" values="1;40" dur="1.5s" repeatCount="indefinite" />
+                        <animate attributeName="opacity" values="1;0" dur="1.5s" repeatCount="indefinite" />
+                    </circle>
+                    <circle cx="30" cy="40" r="1" fill="none" stroke="#ff9500" stroke-width="1.5" stroke-dasharray="2 4">
+                        <animate attributeName="r" values="1;25" dur="1.2s" begin="0.3s" repeatCount="indefinite" />
+                        <animate attributeName="opacity" values="1;0" dur="1.2s" begin="0.3s" repeatCount="indefinite" />
+                    </circle>
+                    <circle cx="70" cy="40" r="1" fill="none" stroke="#4cd964" stroke-width="1.5" stroke-dasharray="2 2">
+                        <animate attributeName="r" values="1;30" dur="1.4s" begin="0.6s" repeatCount="indefinite" />
+                        <animate attributeName="opacity" values="1;0" dur="1.4s" begin="0.6s" repeatCount="indefinite" />
+                    </circle>
+                    <circle cx="50" cy="50" r="2" fill="#ffcc00">
+                        <animate attributeName="opacity" values="1;0;1" dur="0.5s" repeatCount="indefinite" />
+                    </circle>
+                </svg>
+            </div>
+        </div> <!-- Конец блока game-container -->
+
+        <!-- ПРАВЫЙ БЛОК: НОВЫЙ АДАПТИВНЫЙ ЧАТ -->
+        <!-- Кнопка вызова чата (будет видна только на смартфонах) -->
+        <button id="chat-toggle-btn">
+            💬 <span id="chat-badge" class="badge-hidden">0</span>
+        </button>
+
+        <!-- Контейнер чата -->
+        <div id="chat-container">
+            <div id="chat-header">
+                <h3>Чат игроков</h3>
+                <button id="chat-close-btn">&times;</button>
+            </div>
+            <div id="chat-messages"></div>
+            <div id="chat-input-zone">
+                <input type="text" id="chat-input" placeholder="Сообщение..." maxlength="100">
+                <button id="chat-send-btn">Отправить</button>
+            </div>
         </div>
-    </div>
 
-    <button id="restart">Начать заново</button>
+    </div> <!-- Конец блока main-wrapper -->
 
-    <div class="fireworks-container">
-        <svg id="fireworks" width="150" height="150" viewBox="0 0 100 100" style="display: none;">
-            <circle cx="50" cy="50" r="1" fill="none" stroke="#ff3b30" stroke-width="2" stroke-dasharray="3 3">
-                <animate attributeName="r" values="1;40" dur="1.5s" repeatCount="indefinite" />
-                <animate attributeName="opacity" values="1;0" dur="1.5s" repeatCount="indefinite" />
-            </circle>
-            <circle cx="30" cy="40" r="1" fill="none" stroke="#ff9500" stroke-width="1.5" stroke-dasharray="2 4">
-                <animate attributeName="r" values="1;25" dur="1.2s" begin="0.3s" repeatCount="indefinite" />
-                <animate attributeName="opacity" values="1;0" dur="1.2s" begin="0.3s" repeatCount="indefinite" />
-            </circle>
-            <circle cx="70" cy="40" r="1" fill="none" stroke="#4cd964" stroke-width="1.5" stroke-dasharray="2 2">
-                <animate attributeName="r" values="1;30" dur="1.4s" begin="0.6s" repeatCount="indefinite" />
-                <animate attributeName="opacity" values="1;0" dur="1.4s" begin="0.6s" repeatCount="indefinite" />
-            </circle>
-            <circle cx="50" cy="50" r="2" fill="#ffcc00">
-                <animate attributeName="opacity" values="1;0;1" dur="0.5s" repeatCount="indefinite" />
-            </circle>
-        </svg>
-    </div>
-    <!-- ДОБАВЛЯЕМ СТРОКУ ДЛЯ РАБОТЫ С СЕТЬЮ (СТРОГО ПЕРВОЙ) -->
+    <!-- СКРИПТЫ -->
     <script src="/socket.io/socket.io.js"></script>
-    <!-- ПОДКЛЮЧАЕМ ВСЕ МОДУЛИ В ПРАВИЛЬНОМ ПОРЯДКЕ -->
-    <!-- ПОДКЛЮЧАЕМ НОВЫЙ ФАЙЛ С ЛОГИКОЙ ИИ -->
     <script src="ai.js"></script>
-    <!-- НОВЫЙ ФАЙЛ ЛИНИИ -->
     <script src="line.js"></script>
-    <!-- ПОДКЛЮЧАЕМ ОСНОВНОЙ СКРИПТ -->
     <script src="script.js"></script>
 </body>
 </html>
