@@ -3,6 +3,17 @@ const socket = io({
     transports: ['polling']
 });
 
+// === ГЕНЕРАЦИЯ И ОТПРАВКА СЕССИИ ===
+// Берем старый токен или создаем новый случайный id сессии
+let sessionToken = sessionStorage.getItem('tic_tac_toe_session');
+if (!sessionToken) {
+    sessionToken = 'user_' + Math.random().toString(36).substr(2, 9);
+    sessionStorage.setItem('tic_tac_toe_session', sessionToken);
+}
+
+// Сразу же авторизуемся на сервере с этим токеном
+socket.emit('auth-session', sessionToken);
+
 const board = document.getElementById('board');
 const cells = document.querySelectorAll('.cell');
 const statusText = document.getElementById('status');
@@ -57,6 +68,9 @@ socket.on('player-role', (role) => {
     } else {
         statusText.innerText = `Ожидание соперника... Вы играете за: ${myRole}`;
         isGameActive = false; // Ждем старта от сервера
+
+        // Переопределяем очередь ходов при перезаходе: X всегда ходит первым
+        isMyTurn = (myRole === 'X'); 
     }
 });
 
@@ -76,11 +90,110 @@ socket.on('server-move', (cellIndex) => {
     updateStatusMessage();
 });
 
-// 4. Если соперник отключился
+// 4: Окончательный дисконнект по истечении 10 секунд
 socket.on('player-disconnected', (msg) => {
     if (gameMode !== 'pvp') return;
     statusText.innerText = msg;
     isGameActive = false;
+    clearBoardForNewGame(); // Автоматически очищаем поле
+});
+
+// 5. Партнер предлагает начать новую партию
+socket.on('partner-wants-restart', () => {
+    if (gameMode !== 'pvp') return;
+
+    // Выводим текст и добавляем класс btn-choice для красивого стиля
+    statusText.innerHTML = `
+        <span>Соперник предлагает начать заново:</span>
+        <button id="restart-yes" class="btn-choice">Да</button>
+        <button id="restart-no" class="btn-choice">Нет</button>
+    `;
+
+    // Навешиваем событие на кнопку "Да"
+    document.getElementById('restart-yes').addEventListener('click', () => {
+        socket.emit('restart-decision', true);
+    });
+
+    // Навешиваем событие на кнопку "Нет"
+    document.getElementById('restart-no').addEventListener('click', () => {
+        socket.emit('restart-decision', false);
+        
+        // Очищаем экран для того, кто отказался
+        document.body.innerHTML = "<h1 style='text-align:center; margin-top:20%; font-family:sans-serif; color: #2c3e50;'>Вы отказались от игры. Вкладку можно закрыть.</h1>";
+    });
+});
+
+// 6. Получена команда от сервера на запуск новой партии (без перезагрузки страницы!)
+socket.on('game-force-restart', () => {
+    if (gameMode !== 'pvp') return;
+    clearBoardForNewGame();
+});
+
+// 7. Если соперник нажал "Нет" — выводим сообщение инициатору
+socket.on('partner-refused-restart', () => {
+    if (gameMode !== 'pvp') return;
+    statusText.innerText = "Соперник отказался от новой игры";
+    isGameActive = false;
+});
+
+// 8. Получение актуального счёта от сервера
+socket.on('update-server-score', (score) => {
+    if (gameMode !== 'pvp') return;
+
+    // Синхронизируем переменные клиента с сервером
+    winsX = score.X;
+    winsO = score.O;
+    draws = score.draws;
+
+    // Выводим в интерфейс
+    scoreXText.innerText = winsX;
+    scoreOText.innerText = winsO;
+    scoreDrawsText.innerText = draws;
+});
+
+// 9. сервер возвращает состояние поля после F5
+socket.on('restore-board-state', (data) => {
+    if (gameMode !== 'pvp') return;
+
+    // Синхронизируем локальный массив и текущего игрока
+    gameState = data.board;
+    currentPlayer = data.currentTurn;
+    
+    // Перерисовываем поле на экране на основе полученных данных
+    gameState.forEach((symbol, index) => {
+        const cell = document.querySelector(`.cell[data-index="${index}"]`);
+        cell.innerText = symbol;
+        cell.classList.remove('x-player', 'o-player');
+        if (symbol === 'X') cell.classList.add('x-player');
+        if (symbol === 'O') cell.classList.add('o-player');
+    });
+
+    // Пересчитываем активность игры и чья очередь ходить
+    isGameActive = true;
+    isMyTurn = (myRole === currentPlayer);
+    updateStatusMessage();
+});
+
+// Новое событие: соперник нажал F5, но мы ждем его возвращения
+socket.on('partner-disconnected-waiting', (msg) => {
+    if (gameMode !== 'pvp') return;
+    statusText.innerText = msg;
+    isGameActive = false; // Временно блокируем ходы, пока он не переподключится
+});
+
+// 10. Событие: соперник вернулся в игру до истечения 10 секунд
+socket.on('partner-returned', (msg) => {
+    if (gameMode !== 'pvp') return;
+    
+    isGameActive = true; // Снова активируем поле для кликов
+    
+    // Жёстко переписываем текст интерфейса, чтобы надпись ожидания исчезла
+    if (isMyTurn) {
+        statusText.innerText = `Ваш ход (${myRole})`;
+    } else {
+        const partnerRole = myRole === 'X' ? 'O' : 'X';
+        statusText.innerText = `Ход соперника (${partnerRole})`;
+    }
 });
 
 // === ОБЩАЯ ЛОГИКА ИНТЕРФЕЙСА ===
@@ -168,10 +281,19 @@ function checkForWinner() {
         fireworks.style.display = 'block';
         playSound('win');
 
-        if (currentPlayer === 'X') {
-            winsX++; scoreXText.innerText = winsX;
+        // === ЛОГИКА ДЛЯ СЕТИ (Отправка победы на сервер) ===
+        if (gameMode === 'pvp') {
+            // Чтобы сервер не получал два запроса, отправляет только тот, кто сам сделал этот победный ход
+            if (myRole === currentPlayer) {
+                socket.emit('game-over-winner', currentPlayer);
+            }
         } else {
-            winsO++; scoreOText.innerText = winsO;
+            // Локальный счет (для PvE режима с ботом)
+            if (currentPlayer === 'X') {
+                winsX++; scoreXText.innerText = winsX;
+            } else {
+                winsO++; scoreOText.innerText = winsO;
+            }
         }
         return;
     }
@@ -179,7 +301,17 @@ function checkForWinner() {
     if (!gameState.includes("")) {
         statusText.innerText = "Ничья!";
         isGameActive = false;
-        draws++; scoreDrawsText.innerText = draws;
+        
+        // === ЛОГИКА ДЛЯ СЕТИ (Отправка ничьей на сервер) ===
+        if (gameMode === 'pvp') {
+            // Отправляет только тот, чей ход только что был (чтобы не дублировать)
+            if (isMyTurn) {
+                socket.emit('game-over-winner', 'draw');
+            }
+        } else {
+            // Локальный счет для PvE
+            draws++; scoreDrawsText.innerText = draws;
+        }
         return;
     }
 
@@ -190,24 +322,50 @@ function checkForWinner() {
 function restartGame() {
     currentPlayer = 'X';
     gameState = ["", "", "", "", "", "", "", "", ""];
-    
+
     if (gameMode === 'pve') {
         isGameActive = true;
         myRole = 'X';
         isMyTurn = true;
         statusText.innerText = `Ходят ${currentPlayer}`;
+        
+        cells.forEach(cell => {
+            cell.innerText = "";
+            cell.classList.remove('x-player', 'o-player');
+        });
+        strikeLine.style.display = 'none';
+        fireworks.style.display = 'none';
     } else {
-        isGameActive = false; // Перезапуск в сети управляется перезагрузкой страниц
-        statusText.innerText = "Для перезапуска сетевой игры обновите страницу (F5)";
+        // === ЛОГИКА ДЛЯ СЕТИ ===
+        isGameActive = false; 
+        statusText.innerText = "Ожидаем ответ соперника";
+        
+        // Отправляем запрос на сервер
+        socket.emit('player-restart-request');
     }
+}
+
+// Функция, которая полностью сбрасывает состояние игры на клиенте
+function clearBoardForNewGame() {
+    // 1. Сбрасываем логику ходов и массив поля
+    currentPlayer = 'X';
+    gameState = ["", "", "", "", "", "", "", "", ""];
+    isGameActive = true;
     
+    // 2. Определяем, твой ли ход (Игрок X всегда ходит первым)
+    isMyTurn = (myRole === 'X'); 
+
+    // 3. Визуально очищаем все ячейки поля
     cells.forEach(cell => {
         cell.innerText = "";
         cell.classList.remove('x-player', 'o-player');
     });
 
-    strikeLine.style.display = 'none';
-    fireworks.style.display = 'none';
+    // 4. Прячем победную линию, салюты и обновляем статусную строку
+    if (typeof strikeLine !== 'undefined') strikeLine.style.display = 'none';
+    if (typeof fireworks !== 'undefined') fireworks.style.display = 'none';
+    
+    updateStatusMessage();
 }
 
 // Логика переключателя
