@@ -21,6 +21,9 @@ let serverScore = {
     draws: 0
 };
 
+let gameOver = false; // Флаг, чтобы не засчитывать очки дважды
+let gameStarted = false; // Флаг, чтобы не дублировать game-start
+
 io.on('connection', (socket) => {
     console.log('Пользователь подключился к сокету: ' + socket.id);
 
@@ -77,31 +80,67 @@ io.on('connection', (socket) => {
         }
 
         // Если оба игрока на месте и это старт новой игры (поле пустое)
-        if (players['X'] && players['O'] && board.every(cell => cell === "")) {
+        if (players['X'] && players['O'] && board.every(cell => cell === "") && !gameStarted) {
+            gameStarted = true;
             io.emit('game-start', 'Игра началась! Ход Х');
         }
     });
 
     // Изменили прием хода: теперь сервер запоминает его в массив
+    // Функция проверки победы на сервере
+    function checkServerWin() {
+        const lines = [
+            [0,1,2],[3,4,5],[6,7,8],
+            [0,3,6],[1,4,7],[2,5,8],
+            [0,4,8],[2,4,6]
+        ];
+        for (const [a,b,c] of lines) {
+            if (board[a] !== "" && board[a] === board[b] && board[b] === board[c]) {
+                return board[a];
+            }
+        }
+        if (!board.includes("")) return 'draw';
+        return null;
+    }
+
     socket.on('player-move', (cellIndex) => {
         if (socket.role !== 'X' && socket.role !== 'O') return;
+        if (gameOver) return; // Игра уже завершена
+        
+        // Валидация cellIndex (0-8)
+        if (typeof cellIndex !== 'number' || cellIndex < 0 || cellIndex > 8) return;
         
         // Проверяем, что ячейка свободна и ход сделан в свою очередь
         if (board[cellIndex] === "" && currentTurn === socket.role) {
             board[cellIndex] = socket.role;
-            currentTurn = currentTurn === 'X' ? 'O' : 'X'; // Меняем ход на сервере
+            currentTurn = currentTurn === 'X' ? 'O' : 'X';
             
             // Рассылаем ход всем, кроме отправителя
             socket.broadcast.emit('server-move', cellIndex);
+
+            // Серверная проверка на завершение игры (защита от race condition)
+            const result = checkServerWin();
+            if (result === 'X' || result === 'O') {
+                serverScore[result]++;
+                gameOver = true;
+                io.emit('update-server-score', serverScore);
+            } else if (result === 'draw') {
+                serverScore.draws++;
+                gameOver = true;
+                io.emit('update-server-score', serverScore);
+            }
         }
     });
 
     socket.on('game-over-winner', (winner) => {
+        if (gameOver) return; // Сервер уже засчитал результат
         if (winner === 'X' || winner === 'O') {
             serverScore[winner]++;
         } else if (winner === 'draw') {
             serverScore.draws++;
         }
+        gameOver = true;
+        gameStarted = false; // Разрешаем новый game-start при следующей игре
         io.emit('update-server-score', serverScore);
     });
 
@@ -113,6 +152,8 @@ io.on('connection', (socket) => {
         if (agreed) {
             board = Array(9).fill(""); 
             currentTurn = 'X';
+            gameOver = false;
+            gameStarted = false;
             io.emit('game-force-restart');
         } else {
             socket.broadcast.emit('partner-refused-restart');
@@ -154,9 +195,9 @@ io.on('connection', (socket) => {
                 // Полный сброс игры для оставшегося игрока
                 board = Array(9).fill(""); 
                 currentTurn = 'X';
+                gameOver = false;
+                gameStarted = false;
                 io.emit('player-disconnected', 'Ваш соперник ушел окончательно. Игра окончена.');
-                
-                serverScore = { X: 0, O: 0, draws: 0 };
             }, 10000); // 10000 мс = 10 секунд
         }
     });

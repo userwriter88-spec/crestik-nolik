@@ -7,7 +7,7 @@ const socket = io({
 // Берем старый токен или создаем новый случайный id сессии
 let sessionToken = sessionStorage.getItem('tic_tac_toe_session');
 if (!sessionToken) {
-    sessionToken = 'user_' + Math.random().toString(36).substr(2, 9);
+    sessionToken = 'user_' + Math.random().toString(36).slice(2, 11);
     sessionStorage.setItem('tic_tac_toe_session', sessionToken);
 }
 
@@ -109,18 +109,19 @@ socket.on('partner-wants-restart', () => {
         <button id="restart-no" class="btn-choice">Нет</button>
     `;
 
-    // Навешиваем событие на кнопку "Да"
+    // Навешиваем событие на кнопку "Да" (once: true — автоматическое удаление после клика)
     document.getElementById('restart-yes').addEventListener('click', () => {
         socket.emit('restart-decision', true);
-    });
+    }, { once: true });
 
-    // Навешиваем событие на кнопку "Нет"
+    // Навешиваем событие на кнопку "Нет" (once: true — автоматическое удаление после клика)
     document.getElementById('restart-no').addEventListener('click', () => {
         socket.emit('restart-decision', false);
         
-        // Очищаем экран для того, кто отказался
-        document.body.innerHTML = "<h1 style='text-align:center; margin-top:20%; font-family:sans-serif; color: #2c3e50;'>Вы отказались от игры. Вкладку можно закрыть.</h1>";
-    });
+        // Показываем сообщение об отказе, не убивая весь DOM
+        statusText.innerHTML = '<span style="color: #e74c3c; font-weight: bold;">Вы отказались от игры. Вкладку можно закрыть.</span>';
+        document.getElementById('board').style.pointerEvents = 'none';
+    }, { once: true });
 });
 
 // 6. Получена команда от сервера на запуск новой партии (без перезагрузки страницы!)
@@ -304,8 +305,8 @@ function checkForWinner() {
         
         // === ЛОГИКА ДЛЯ СЕТИ (Отправка ничьей на сервер) ===
         if (gameMode === 'pvp') {
-            // Отправляет только тот, чей ход только что был (чтобы не дублировать)
-            if (isMyTurn) {
+            // Отправляет только тот, чей ход только что был (myRole === currentPlayer более надёжно, чем isMyTurn)
+            if (myRole === currentPlayer) {
                 socket.emit('game-over-winner', 'draw');
             }
         } else {
@@ -437,11 +438,20 @@ socket.on('broadcast-chat-message', (data) => {
     msgElement.classList.add('chat-msg');
 
     let prefix = '';
-    if (data.role === 'X') prefix = '[Игрок X]';
-    else if (data.role === 'O') prefix = '[Игрок O]';
-    else prefix = '[Зритель]';
+    let roleClass = 'viewer';
+    if (data.role === 'X') { prefix = '[Игрок X]'; roleClass = 'x'; }
+    else if (data.role === 'O') { prefix = '[Игрок O]'; roleClass = 'o'; }
+    else { prefix = '[Зритель]'; roleClass = 'viewer'; }
 
-    msgElement.innerHTML = `<span class="chat-msg-${data.role.toLowerCase()}">${prefix}:</span> ${data.text}`;
+    const prefixSpan = document.createElement('span');
+    prefixSpan.classList.add(`chat-msg-${roleClass}`);
+    prefixSpan.textContent = `${prefix}:`;
+
+    const textSpan = document.createElement('span');
+    textSpan.textContent = ` ${data.text}`;
+
+    msgElement.appendChild(prefixSpan);
+    msgElement.appendChild(textSpan);
     chatMessages.appendChild(msgElement);
     chatMessages.scrollTop = chatMessages.scrollHeight;
 
