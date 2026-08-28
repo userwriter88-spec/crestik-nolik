@@ -3,40 +3,106 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Крестики-Нолики с ИИ</title>
+    <title>Крестики-Нолики</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
     <h1>Крестики-Нолики</h1>
 
-    <!-- ГЛАВНАЯ ОБЁРТКА ДЛЯ ИГРЫ И ЧАТА -->
-    <div class="main-wrapper">
-
-        <!-- Всплывающий пуш для новых сообщений на мобилках -->
-        <div id="chat-toast" class="toast-hidden"></div>
-        
-        <!-- ЛЕВЫЙ БЛОК: ВСЯ ВАША ИГРА -->
-        <div class="game-container">
-            <!-- Таблица общего счета -->
-            <div class="score-board">
-                <div>Игрок X: <span id="scoreX">0</span></div>
-                <div>Ничьи: <span id="scoreDraws">0</span></div>
-                <div>Игрок O: <span id="scoreO">0</span></div>
+    <!-- МОДАЛКА ПАРОЛЯ -->
+    <div id="password-modal" class="modal hidden">
+        <div class="modal-content">
+            <h3>Комната защищена паролем</h3>
+            <input type="password" id="password-input" placeholder="Введите пароль..." maxlength="30">
+            <div id="password-error" class="room-error hidden"></div>
+            <div class="modal-buttons">
+                <button id="password-ok">Войти</button>
+                <button id="password-cancel">Отмена</button>
             </div>
-            
-            <!-- Переключатель режима игры -->
-            <div class="toggle-container">
-                <span class="toggle-label">Вдвоем</span>
-                <label class="switch">
-                    <input type="checkbox" id="mode-toggle">
-                    <span class="slider"></span>
-                </label>
-                <span class="toggle-label">Против ИИ</span>
+        </div>
+    </div>
+
+    <!-- МОДАЛКА ВЫБОРА РОЛИ -->
+    <div id="role-modal" class="modal hidden">
+        <div class="modal-content">
+            <h3>Войти в комнату как...</h3>
+            <div class="role-buttons">
+                <button id="role-player" class="role-btn role-btn-player">Игрок</button>
+                <button id="role-viewer" class="role-btn role-btn-viewer">Наблюдатель</button>
+                <button id="role-cancel" class="role-btn role-btn-cancel">Отмена</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- МОДАЛКА ВЫБОРА РЕЖИМА ИИ -->
+    <div id="ai-modal" class="modal hidden">
+        <div class="modal-content">
+            <h3>Игра против ИИ</h3>
+            <p style="margin-bottom:12px;color:#666;font-size:14px;">Выберите режим:</p>
+            <div class="role-buttons">
+                <button id="ai-local" class="role-btn">Локально</button>
+                <button id="ai-room" class="role-btn">Создать комнату</button>
+                <button id="ai-cancel" class="role-btn role-btn-cancel">Отмена</button>
+            </div>
+            <div class="ai-chat-option" style="margin-top:12px;text-align:center;">
+                <input type="checkbox" id="ai-chat-check" checked>
+                <label for="ai-chat-check">Чат в комнате</label>
+            </div>
+        </div>
+    </div>
+
+    <!-- ЛОББИ -->
+    <div id="lobby-view">
+        <div class="lobby-card">
+            <h2>Создать комнату</h2>
+            <div class="lobby-create">
+                <input type="text" id="room-name-input" placeholder="Название комнаты..." maxlength="30">
+                <button id="create-room-btn">Создать</button>
+            </div>
+            <div class="lobby-password-option">
+                <input type="checkbox" id="room-password-check">
+                <label for="room-password-check">Пароль</label>
+                <input type="password" id="room-password-input" placeholder="Пароль..." maxlength="30" disabled>
+            </div>
+            <div class="lobby-chat-option">
+                <input type="checkbox" id="room-chat-check" checked>
+                <label for="room-chat-check">Чат</label>
+            </div>
+            <div id="room-error" class="room-error hidden"></div>
+        </div>
+
+        <div class="lobby-card">
+            <h2>Доступные комнаты</h2>
+            <div id="room-list" class="room-list">
+                <div class="room-list-empty">Загрузка...</div>
+            </div>
+        </div>
+
+        <div class="lobby-card lobby-ai-card">
+            <h2>Одиночная игра</h2>
+            <p class="lobby-ai-desc">Играйте против компьютера без подключения к сети</p>
+            <button id="play-ai-btn">Играть против ИИ</button>
+        </div>
+    </div>
+
+    <!-- ИГРА -->
+    <div id="game-view" class="hidden">
+        <div class="game-header">
+            <span id="role-badge" class="role-badge"></span>
+            <span id="room-name-display"></span>
+            <button id="leave-room-btn">Покинуть</button>
+        </div>
+
+        <div class="game-content">
+            <div class="score-board">
+                <div>X: <span id="scoreX">0</span></div>
+                <div>Ничьи: <span id="scoreDraws">0</span></div>
+                <div>O: <span id="scoreO">0</span></div>
             </div>
 
             <div id="status">Ходят Х</div>
-            
+
             <div class="board-container">
                 <div class="strike-line" id="strike-line"></div>
                 <div class="board" id="board">
@@ -73,30 +139,28 @@
                     </circle>
                 </svg>
             </div>
-        </div> <!-- Конец блока game-container -->
+        </div>
 
-        <!-- ПРАВЫЙ БЛОК: НОВЫЙ АДАПТИВНЫЙ ЧАТ -->
-        <!-- Кнопка вызова чата (будет видна только на смартфонах) -->
         <button id="chat-toggle-btn">
             💬 <span id="chat-badge" class="badge-hidden">0</span>
         </button>
 
-        <!-- Контейнер чата -->
-        <div id="chat-container">
+        <div id="chat-toast" class="toast-hidden"></div>
+
+        <div id="chat-container" class="chat-closed">
             <div id="chat-header">
-                <h3>Чат игроков</h3>
+                <h3>Чат</h3>
                 <button id="chat-close-btn">&times;</button>
             </div>
-            <div id="chat-messages"></div>
+            <div id="chat-messages" data-placeholder="Пока нет сообщений"></div>
+            <div id="chat-typing" class="chat-typing hidden"></div>
             <div id="chat-input-zone">
                 <input type="text" id="chat-input" placeholder="Сообщение..." maxlength="100">
                 <button id="chat-send-btn">Отправить</button>
             </div>
         </div>
+    </div>
 
-    </div> <!-- Конец блока main-wrapper -->
-
-    <!-- СКРИПТЫ -->
     <script src="/socket.io/socket.io.js"></script>
     <script src="ai.js"></script>
     <script src="line.js"></script>

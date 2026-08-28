@@ -2,206 +2,399 @@ const express = require('express');
 const app = express();
 const http = require('http').createServer(app);
 const io = require('socket.io')(http);
+const { getBestMove } = require('./ai.js');
 
 app.use(express.static(__dirname));
 
-// Храним токены игроков: { 'X': 'token1', 'O': 'token2' }
-let players = { X: null, O: null }; 
+// === ХРАНИЛИЩЕ КОМНАТ ===
+const rooms = {};
 
-// Объект для хранения таймеров дисконнекта: { 'X': timeoutОбъект, 'O': timeoutОбъект }
-let disconnectTimers = { X: null, O: null };
+function createRoom(name, password, aiGame, chatEnabled) {
+    rooms[name] = {
+        players: { X: null, O: null },
+        password: password || null,
+        board: Array(9).fill(""),
+        currentTurn: 'X',
+        score: { X: 0, O: 0, draws: 0 },
+        gameOver: false,
+        gameStarted: false,
+        aiGame: aiGame || false,
+        chatEnabled: chatEnabled !== false,
+        creatorToken: null,
+        disconnectTimers: { X: null, O: null },
+        gameHistory: [],
+        chatHistory: [],
+        viewerTokens: [],
+        nextViewerId: 1
+    };
+}
 
-// Состояние игрового поля на сервере
-let board = Array(9).fill(""); 
-let currentTurn = 'X'; // Чей сейчас ход на сервере
+function getRoomList() {
+    return Object.keys(rooms).map(name => ({
+        name,
+        hasPassword: !!rooms[name].password,
+        players: {
+            X: !!rooms[name].players.X,
+            O: !!rooms[name].players.O
+        },
+        viewerCount: rooms[name].viewerTokens.length,
+        totalParticipants: (!!rooms[name].players.X ? 1 : 0) + (!!rooms[name].players.O ? 1 : 0) + rooms[name].viewerTokens.length,
+        gameStarted: rooms[name].gameStarted,
+        gameOver: rooms[name].gameOver,
+        aiGame: rooms[name].aiGame || false,
+        chatEnabled: rooms[name].chatEnabled !== false
+    }));
+}
 
-let serverScore = {
-    X: 0,
-    O: 0,
-    draws: 0
-};
+function checkServerWin(board) {
+    const lines = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+    for (const [a,b,c] of lines) {
+        if (board[a] !== "" && board[a] === board[b] && board[b] === board[c]) return board[a];
+    }
+    if (!board.includes("")) return 'draw';
+    return null;
+}
 
-let gameOver = false; // Флаг, чтобы не засчитывать очки дважды
-let gameStarted = false; // Флаг, чтобы не дублировать game-start
+function getRoleForSocket(room, sessionToken) {
+    if (room.players.X === sessionToken) return 'X';
+    if (room.players.O === sessionToken) return 'O';
+    if (!room.players.X) return 'X';
+    if (!room.players.O) return 'O';
+    return 'viewer';
+}
+
+function addGameToHistory(room, winner, players) {
+    room.gameHistory.push({
+        winner,
+        playerX: players.X || 'неизвестно',
+        playerO: players.O || 'неизвестно',
+        date: new Date().toLocaleString('ru-RU')
+    });
+    if (room.gameHistory.length > 50) room.gameHistory.shift();
+}
+
+function addChatToHistory(room, data) {
+    room.chatHistory.push(data);
+    if (room.chatHistory.length > 100) room.chatHistory.shift();
+}
 
 io.on('connection', (socket) => {
-    console.log('Пользователь подключился к сокету: ' + socket.id);
+    console.log('Подключился: ' + socket.id);
 
-    // Игрок сообщает свой токен сессии сразу после подключения
+    socket.room = null;
+    socket.role = null;
+    socket.sessionToken = null;
+
+    // === УПРАВЛЕНИЕ КОМНАТАМИ ===
+
     socket.on('auth-session', (sessionToken) => {
-        if (!sessionToken) return;
-
-        let assignedRole = null;
-
-        // 1. Проверяем, не возвращается ли старый игрок X или O по токену
-        if (players['X'] === sessionToken) {
-            assignedRole = 'X';
-        } else if (players['O'] === sessionToken) {
-            assignedRole = 'O';
-        }
-
-        if (assignedRole) {
-            // Восстановление сессии! Отменяем таймер удаления
-            if (disconnectTimers[assignedRole]) {
-                clearTimeout(disconnectTimers[assignedRole]);
-                disconnectTimers[assignedRole] = null;
-                socket.broadcast.emit('partner-returned', `Игрок ${assignedRole} вернулся. Продолжаем!`);
-                console.log(`Игрок ${assignedRole} успешно вернулся в сессию!`);
-            }
-        } else {
-            // 2. Новый игрок (или токен не совпал) — распределяем свободные роли
-            if (!players['X']) {
-                players['X'] = sessionToken;
-                assignedRole = 'X';
-            } else if (!players['O']) {
-                players['O'] = sessionToken;
-                assignedRole = 'O';
-            } else {
-                assignedRole = 'viewer';
-            }
-        }
-
-        // Привязываем роль и токен прямо к текущему сокету
-        socket.role = assignedRole;
-        socket.sessionToken = sessionToken;
-
-        // Отправляем роль игроку
-        socket.emit('player-role', assignedRole);
-
-        // Отправляем текущий счёт
-        socket.emit('update-server-score', serverScore);
-
-        // Если это вернувшийся игрок — отправляем ему актуальное состояние поля
-        if (assignedRole === 'X' || assignedRole === 'O') {
-            socket.emit('restore-board-state', {
-                board: board,
-                currentTurn: currentTurn
-            });
-        }
-
-        // Если оба игрока на месте и это старт новой игры (поле пустое)
-        if (players['X'] && players['O'] && board.every(cell => cell === "") && !gameStarted) {
-            gameStarted = true;
-            io.emit('game-start', 'Игра началась! Ход Х');
-        }
+        if (sessionToken) socket.sessionToken = sessionToken;
     });
 
-    // Изменили прием хода: теперь сервер запоминает его в массив
-    // Функция проверки победы на сервере
-    function checkServerWin() {
-        const lines = [
-            [0,1,2],[3,4,5],[6,7,8],
-            [0,3,6],[1,4,7],[2,5,8],
-            [0,4,8],[2,4,6]
-        ];
-        for (const [a,b,c] of lines) {
-            if (board[a] !== "" && board[a] === board[b] && board[b] === board[c]) {
-                return board[a];
+    socket.on('get-rooms', () => {
+        socket.emit('room-list', getRoomList());
+    });
+
+    socket.on('create-room', (data) => {
+        const roomName = data && data.name;
+        const password = data && data.password;
+        const aiGame = data && data.aiGame;
+        const chatEnabled = data && data.chatEnabled;
+        if (!roomName || typeof roomName !== 'string') return;
+        const name = roomName.trim().slice(0, 30);
+        if (!name) { socket.emit('room-error', 'Некорректное название'); return; }
+        if (rooms[name]) { socket.emit('room-error', 'Комната с таким названием уже существует'); return; }
+
+        createRoom(name, password || null, aiGame || false, chatEnabled);
+        if (aiGame) rooms[name].creatorToken = socket.sessionToken;
+        internalJoin(socket, name, password || null);
+        io.emit('room-list', getRoomList());
+    });
+
+    socket.on('join-room', (data) => {
+        const roomName = data && data.name;
+        const password = data && data.password;
+        const asViewer = data && data.asViewer;
+        if (!roomName || !rooms[roomName]) { socket.emit('room-error', 'Комната не найдена'); return; }
+        const room = rooms[roomName];
+
+        // Проверка пароля
+        if (room.password && room.password !== password) {
+            socket.emit('room-error', 'Неверный пароль');
+            return;
+        }
+
+        // Если asViewer явно true — принудительно назначаем наблюдателем
+        if (asViewer) {
+            socket.room = roomName;
+            socket.role = 'viewer';
+            socket.join(roomName);
+            if (!room.viewerTokens.includes(socket.sessionToken)) {
+                room.viewerTokens.push(socket.sessionToken);
+            }
+            socket.viewerId = room.nextViewerId++;
+            socket.emit('player-role', 'viewer', socket.viewerId);
+            socket.emit('update-server-score', room.score);
+            socket.emit('room-joined', { roomName, role: 'viewer', hasPassword: !!room.password, gameHistory: room.gameHistory, chatHistory: room.chatHistory, aiGame: room.aiGame || false, chatEnabled: room.chatEnabled !== false });
+            socket.emit('restore-board-state', { board: room.board, currentTurn: room.currentTurn, gameOver: room.gameOver });
+            io.emit('room-list', getRoomList());
+            return;
+        }
+
+        internalJoin(socket, roomName, password || null);
+    });
+
+    socket.on('leave-room', () => {
+        internalLeave(socket);
+    });
+
+    function internalJoin(socket, roomName, password) {
+        const room = rooms[roomName];
+        if (!room) return;
+
+        // Если уже в другой комнате — выйти
+        if (socket.room && socket.room !== roomName) internalLeave(socket);
+
+        let role = getRoleForSocket(room, socket.sessionToken);
+
+        // AI-комнаты: только создатель может быть игроком, остальные — наблюдатели
+        if (room.aiGame && role !== 'viewer' && room.creatorToken !== socket.sessionToken) {
+            role = 'viewer';
+        }
+
+        if (role === 'X') room.players.X = socket.sessionToken;
+        else if (role === 'O') room.players.O = socket.sessionToken;
+        else if (role === 'viewer') {
+            if (!room.viewerTokens.includes(socket.sessionToken)) {
+                room.viewerTokens.push(socket.sessionToken);
+            }
+            socket.viewerId = room.nextViewerId++;
+        }
+
+        socket.room = roomName;
+        socket.role = role;
+        socket.join(roomName);
+
+        socket.emit('player-role', role);
+        socket.emit('update-server-score', room.score);
+        socket.emit('room-joined', {
+            roomName,
+            role,
+            hasPassword: !!room.password,
+            gameHistory: room.gameHistory,
+            chatHistory: room.chatHistory,
+            aiGame: room.aiGame || false,
+            chatEnabled: room.chatEnabled !== false
+        });
+
+        if (role === 'X' || role === 'O') {
+            if (room.disconnectTimers[role]) {
+                clearTimeout(room.disconnectTimers[role]);
+                room.disconnectTimers[role] = null;
+                io.to(roomName).emit('partner-returned', `Игрок ${role} вернулся. Продолжаем!`);
             }
         }
-        if (!board.includes("")) return 'draw';
-        return null;
+        socket.emit('restore-board-state', { board: room.board, currentTurn: room.currentTurn, gameOver: room.gameOver });
+
+        tryStartGame(room, roomName);
+        io.emit('room-list', getRoomList());
     }
 
-    socket.on('player-move', (cellIndex) => {
-        if (socket.role !== 'X' && socket.role !== 'O') return;
-        if (gameOver) return; // Игра уже завершена
-        
-        // Валидация cellIndex (0-8)
-        if (typeof cellIndex !== 'number' || cellIndex < 0 || cellIndex > 8) return;
-        
-        // Проверяем, что ячейка свободна и ход сделан в свою очередь
-        if (board[cellIndex] === "" && currentTurn === socket.role) {
-            board[cellIndex] = socket.role;
-            currentTurn = currentTurn === 'X' ? 'O' : 'X';
-            
-            // Рассылаем ход всем, кроме отправителя
-            socket.broadcast.emit('server-move', cellIndex);
+    function internalLeave(socket) {
+        if (!socket.room) return;
+        const roomName = socket.room;
+        const room = rooms[roomName];
+        socket.leave(roomName);
 
-            // Серверная проверка на завершение игры (защита от race condition)
-            const result = checkServerWin();
-            if (result === 'X' || result === 'O') {
-                serverScore[result]++;
-                gameOver = true;
-                io.emit('update-server-score', serverScore);
-            } else if (result === 'draw') {
-                serverScore.draws++;
-                gameOver = true;
-                io.emit('update-server-score', serverScore);
+        if (room) {
+            const role = socket.role;
+            if (room.aiGame && (role === 'X' || role === 'O')) {
+                io.to(roomName).emit('room-closed', 'Хост покинул игру с ИИ');
+                room.players[role] = null;
+                delete rooms[roomName];
+                socket.room = null;
+                socket.role = null;
+                io.emit('room-list', getRoomList());
+                return;
+            }
+            if (role === 'X' || role === 'O') {
+                io.to(roomName).emit('partner-disconnected-waiting', 'Соперник отключился. Ожидаем возвращения (10 сек)...');
+
+                room.disconnectTimers[role] = setTimeout(() => {
+                    const winner = role === 'X' ? 'O' : 'X';
+                    const awardWin = room.players[winner] && !room.gameOver;
+                    if (awardWin) {
+                        room.score[winner]++;
+                        addGameToHistory(room, winner, room.players);
+                        io.to(roomName).emit('update-server-score', room.score);
+                        io.to(roomName).emit('update-history', room.gameHistory);
+                    }
+                    room.players[role] = null;
+                    room.disconnectTimers[role] = null;
+                    room.board = Array(9).fill("");
+                    room.currentTurn = 'X';
+                    room.gameOver = false;
+                    room.gameStarted = false;
+                    io.to(roomName).emit('player-disconnected', awardWin ? `Игрок ${role} покинул игру. Победа присуждена ${winner}.` : `Игрок ${role} покинул игру.`);
+
+                    if (!room.players.X && !room.players.O) {
+                        delete rooms[roomName];
+                    }
+                    io.emit('room-list', getRoomList());
+                }, 10000);
+            } else if (role === 'viewer') {
+                const idx = room.viewerTokens.indexOf(socket.sessionToken);
+                if (idx !== -1) room.viewerTokens.splice(idx, 1);
+            }
+        }
+
+        socket.room = null;
+        socket.role = null;
+        io.emit('room-list', getRoomList());
+    }
+
+    // === ИГРОВАЯ ЛОГИКА ===
+
+    socket.on('player-move', (cellIndex) => {
+        if (!socket.room || !socket.role) return;
+        const room = rooms[socket.room];
+        if (!room || room.gameOver) return;
+        if (socket.role !== 'X' && socket.role !== 'O') return;
+        if (typeof cellIndex !== 'number' || cellIndex < 0 || cellIndex > 8) return;
+
+        if (room.board[cellIndex] === "" && room.currentTurn === socket.role) {
+            room.board[cellIndex] = socket.role;
+            room.currentTurn = socket.role === 'X' ? 'O' : 'X';
+            socket.to(socket.room).emit('server-move', cellIndex);
+
+            let result = checkServerWin(room.board);
+
+            // AI-комната: после хода человека ходит бот (O) с задержкой
+            if (!result && room.aiGame && socket.role === 'X') {
+                const roomName = socket.room;
+                setTimeout(() => {
+                    const r = rooms[roomName];
+                    if (!r || r.gameOver || r.currentTurn !== 'O') return;
+                    const aiIndex = getBestMove(r.board);
+                    if (aiIndex !== null) {
+                        r.board[aiIndex] = 'O';
+                        r.currentTurn = 'X';
+                        io.to(roomName).emit('server-move', aiIndex);
+                        const aiResult = checkServerWin(r.board);
+                        if (aiResult) {
+                            if (aiResult === 'X' || aiResult === 'O') {
+                                r.score[aiResult]++;
+                                addGameToHistory(r, aiResult, r.players);
+                            } else if (aiResult === 'draw') {
+                                r.score.draws++;
+                                addGameToHistory(r, 'draw', r.players);
+                            }
+                            r.gameOver = true;
+                            io.to(roomName).emit('update-history', r.gameHistory);
+                            io.to(roomName).emit('update-server-score', r.score);
+                        }
+                    }
+                }, 500);
+            }
+
+            if (result) {
+                if (result === 'X' || result === 'O') {
+                    room.score[result]++;
+                    addGameToHistory(room, result, room.players);
+                } else if (result === 'draw') {
+                    room.score.draws++;
+                    addGameToHistory(room, 'draw', room.players);
+                }
+                room.gameOver = true;
+                io.to(socket.room).emit('update-history', room.gameHistory);
+                io.to(socket.room).emit('update-server-score', room.score);
             }
         }
     });
 
     socket.on('game-over-winner', (winner) => {
-        if (gameOver) return; // Сервер уже засчитал результат
+        if (!socket.room) return;
+        const room = rooms[socket.room];
+        if (!room || room.gameOver) return;
         if (winner === 'X' || winner === 'O') {
-            serverScore[winner]++;
+            room.score[winner]++;
+            addGameToHistory(room, winner, room.players);
         } else if (winner === 'draw') {
-            serverScore.draws++;
+            room.score.draws++;
+            addGameToHistory(room, 'draw', room.players);
         }
-        gameOver = true;
-        gameStarted = false; // Разрешаем новый game-start при следующей игре
-        io.emit('update-server-score', serverScore);
+        room.gameOver = true;
+        room.gameStarted = false;
+        io.to(socket.room).emit('update-history', room.gameHistory);
+        io.to(socket.room).emit('update-server-score', room.score);
     });
 
     socket.on('player-restart-request', () => {
-        socket.broadcast.emit('partner-wants-restart');
+        if (!socket.room) return;
+        socket.to(socket.room).emit('partner-wants-restart');
     });
 
     socket.on('restart-decision', (agreed) => {
+        if (!socket.room) return;
+        const room = rooms[socket.room];
+        if (!room) return;
         if (agreed) {
-            board = Array(9).fill(""); 
-            currentTurn = 'X';
-            gameOver = false;
-            gameStarted = false;
-            io.emit('game-force-restart');
+            room.board = Array(9).fill("");
+            room.currentTurn = 'X';
+            room.gameOver = false;
+            room.gameStarted = false;
+            io.to(socket.room).emit('game-force-restart');
         } else {
-            socket.broadcast.emit('partner-refused-restart');
+            socket.to(socket.room).emit('partner-refused-restart');
         }
     });
 
-        // === ЛОГИКА ЧАТА НА СЕРВЕРЕ ===
+    // === ЧАТ ===
+
     socket.on('send-chat-message', (text) => {
-        if (!text || text.trim() === "") return;
-
-        // Защита от взлома верстки (экранирование тегов < и >)
-        const safeText = text.replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
-        const messageData = {
-            role: socket.role || 'viewer', // Роль отправителя (X, O или viewer)
-            text: safeText
+        if (!text || text.trim() === "" || !socket.room) return;
+        const room = rooms[socket.room];
+        if (!room || !room.chatEnabled) return;
+        const safeText = text.replace(/</g, "&lt;").replace(/>/g, "&gt;").slice(0, 200);
+        const msgData = {
+            role: socket.role || 'viewer',
+            viewerId: socket.viewerId || null,
+            text: safeText,
+            time: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
+            senderId: socket.id
         };
-
-        // Отправляем сообщение абсолютно ВСЕМ участникам в комнате
-        io.emit('broadcast-chat-message', messageData);
+        addChatToHistory(rooms[socket.room], msgData);
+        io.to(socket.room).emit('broadcast-chat-message', msgData);
     });
+
+    // === ЧАТ — ПЕЧАТАЕТ ===
+
+    socket.on('chat-typing', () => {
+        if (!socket.room) return;
+        const room = rooms[socket.room];
+        if (!room || !room.chatEnabled) return;
+        socket.to(socket.room).emit('chat-typing', socket.role || 'viewer');
+    });
+
+    // === ДИСКОННЕКТ ===
 
     socket.on('disconnect', () => {
-        const role = socket.role;
-        console.log(`Пользователь отключился: ${socket.id} (Роль: ${role})`);
-        
-        if (role === 'X' || role === 'O') {
-            // Оповещаем соперника, что у него есть 10 секунд
-            socket.broadcast.emit('partner-disconnected-waiting', 'Соперник отключился. Ожидаем возвращения (10 сек)...');
-
-            // Запускаем таймер на 10 секунд
-            disconnectTimers[role] = setTimeout(() => {
-                console.log(`Время ожидания игрока ${role} истекло. Сброс комнаты.`);
-                
-                // Полностью удаляем сессию игрока
-                delete players[role];
-                disconnectTimers[role] = null;
-                
-                // Полный сброс игры для оставшегося игрока
-                board = Array(9).fill(""); 
-                currentTurn = 'X';
-                gameOver = false;
-                gameStarted = false;
-                io.emit('player-disconnected', 'Ваш соперник ушел окончательно. Игра окончена.');
-            }, 10000); // 10000 мс = 10 секунд
-        }
+        console.log('Отключился: ' + socket.id);
+        internalLeave(socket);
     });
 });
+
+function tryStartGame(room, roomName) {
+    if (room.gameStarted) return;
+    if (!room.board.every(c => c === "")) return;
+    if (room.aiGame && room.players.X) {
+        room.gameStarted = true;
+        io.to(roomName).emit('game-start', 'Игра началась! Ход Х');
+    } else if (room.players.X && room.players.O) {
+        room.gameStarted = true;
+        io.to(roomName).emit('game-start', 'Игра началась! Ход Х');
+    }
+}
 
 const PORT = process.env.PORT || 3000;
 http.listen(PORT, () => {
